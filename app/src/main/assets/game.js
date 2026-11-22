@@ -1,12 +1,16 @@
 (() => {
   'use strict';
 
-  // Vertical Portrait Tactical Arena (14 cols x 22 rows @ 40px = 560 x 880, ~9:14)
-  const ARENA_W = 560;
-  const ARENA_H = 880;
+  const arenaLayout = window.RicochetArena;
   const TILE = 40;
-  const COLS = 14;
-  const ROWS = 22;
+  const PORTRAIT_COLS = 14;
+  const PORTRAIT_ROWS = 22;
+  // Landscape keeps the portrait core and fills extra viewport width with flank lanes.
+  const MIN_LANDSCAPE_COLS = PORTRAIT_ROWS + arenaLayout.FLANK_COLS * 2;
+  let COLS = PORTRAIT_COLS;
+  let ROWS = PORTRAIT_ROWS;
+  let ARENA_W = COLS * TILE;
+  let ARENA_H = ROWS * TILE;
 
   const MAX_HP = 3;
   const PLAYER_RADIUS = 15;
@@ -1157,6 +1161,8 @@
     state.mouse.down = false;
     state.touch.canvasAimDown = false;
     state.touch.canvasTouchId = null;
+    state.touch.fireReleaseQueued = 0;
+    state.p2Touch.fireReleaseQueued = 0;
     resetDriveStick();
     resetAimStick(false);
     resetP2DriveStick();
@@ -1253,6 +1259,9 @@
   floorCanvas.width = ARENA_W * 2;
   floorCanvas.height = ARENA_H * 2;
   const floorCtx = floorCanvas.getContext('2d');
+  const asphaltTile = document.createElement('canvas');
+  asphaltTile.width = asphaltTile.height = TILE * 2;
+  let asphaltPattern = null;
 
   const decalCanvas = document.createElement('canvas');
   decalCanvas.width = ARENA_W * 2;
@@ -1317,12 +1326,15 @@
       aimOn: false,
       fireHeld: false,
       fireQueued: 0,
+      fireAngle: null,
     },
     netTarget: null,
     netSyncAccum: 0,
     netInputAccum: 0,
     netSeq: 0,
     lastRecvSeq: -1,
+    arenaLandscape: false,
+    arenaRevision: 0,
     pingMs: null,
 
     keys: Object.create(null),
@@ -1339,11 +1351,19 @@
       aimMouseActive: false,
       aimOriginX: 0,
       aimOriginY: 0,
+      aimStartTime: null,
+      aimStartX: 0,
+      aimStartY: 0,
+      aimLastX: 0,
+      aimLastY: 0,
+      aimTravel: 0,
+      aimPrecision: false,
       aimActive: false,
       aimArmed: false,
       aimAngle: -Math.PI / 2,
       hasCustomAim: false,
       fireReleaseQueued: 0,
+      fireAngle: null,
       canvasTouchId: null,
       canvasAimDown: false,
       lastTouchTime: 0,
@@ -1357,14 +1377,24 @@
       aimTouchId: null,
       aimOriginX: 0,
       aimOriginY: 0,
+      aimStartTime: null,
+      aimStartX: 0,
+      aimStartY: 0,
+      aimLastX: 0,
+      aimLastY: 0,
+      aimTravel: 0,
+      aimPrecision: false,
       aimActive: false,
       aimArmed: false,
       aimAngle: Math.PI / 2,
       hasCustomAim: false,
       fireReleaseQueued: 0,
+      fireAngle: null,
     },
-    renderScaleX: 1,
-    renderScaleY: 1,
+    hudBottom: 0,
+    renderScale: 1,
+    renderOffsetX: 0,
+    renderOffsetY: 0,
     dpr: 1,
   };
 
@@ -1401,6 +1431,11 @@
     c.setTransform(2, 0, 0, 2, 0, 0);
     const rng = createRng(4099 + sectorNum * 131);
     const theme = getThemeById(themeId);
+    const landscape = state.arenaLandscape;
+    const flanks = landscape ? arenaLayout.flankColumns(COLS) : { left: 0, right: 0 };
+    const apronX = landscape ? TILE * (3 + flanks.left) : TILE * 2;
+    const apronRight = landscape ? TILE * (3 + flanks.right) : TILE * 2;
+    const apronY = landscape ? TILE * 2 : TILE * 3;
 
     // Base weathered asphalt / tarmac / basalt
     c.fillStyle = theme.base;
@@ -1408,18 +1443,18 @@
 
     // Concrete / plated apron slabs in central compound zones
     c.fillStyle = theme.apron;
-    c.fillRect(TILE * 2, TILE * 3, ARENA_W - TILE * 4, ARENA_H - TILE * 6);
+    c.fillRect(apronX, apronY, ARENA_W - apronX - apronRight, ARENA_H - apronY * 2);
 
     // Poured expansion slab joints
     c.strokeStyle = theme.seam;
     c.lineWidth = 1.5;
-    for (let x = TILE * 2; x <= ARENA_W - TILE * 2; x += TILE * 2) {
+    for (let x = apronX; x <= ARENA_W - apronRight; x += TILE * 2) {
       c.beginPath();
       c.moveTo(x, TILE);
       c.lineTo(x, ARENA_H - TILE);
       c.stroke();
     }
-    for (let y = TILE * 3; y <= ARENA_H - TILE * 3; y += TILE * 2) {
+    for (let y = apronY; y <= ARENA_H - apronY; y += TILE * 2) {
       c.beginPath();
       c.moveTo(TILE, y);
       c.lineTo(ARENA_W - TILE, y);
@@ -1481,11 +1516,22 @@
     c.lineWidth = 2;
     c.setLineDash([12, 10]);
     c.strokeRect(TILE + 8, TILE + 8, ARENA_W - (TILE + 8) * 2, ARENA_H - (TILE + 8) * 2);
+    if (landscape) {
+      // Lane dividers marking the landscape-only flanking corridors
+      c.setLineDash([6, 12]);
+      c.beginPath();
+      for (const x of [TILE * (1 + flanks.left), ARENA_W - TILE * (1 + flanks.right)]) {
+        c.moveTo(x, TILE);
+        c.lineTo(x, ARENA_H - TILE);
+      }
+      c.stroke();
+    }
     c.setLineDash([]);
 
     if (isBoss) {
       // Subtle crimson tactical threat vignette at arena perimeter
-      const bossVig = c.createRadialGradient(ARENA_W * 0.5, ARENA_H * 0.45, 90, ARENA_W * 0.5, ARENA_H * 0.5, ARENA_H * 0.65);
+      const threat = canonicalToArena(PORTRAIT_COLS * TILE * 0.5, PORTRAIT_ROWS * TILE * 0.45);
+      const bossVig = c.createRadialGradient(threat.x, threat.y, 90, ARENA_W * 0.5, ARENA_H * 0.5, Math.max(ARENA_W, ARENA_H) * 0.65);
       bossVig.addColorStop(0, 'rgba(127, 29, 29, 0)');
       bossVig.addColorStop(1, 'rgba(127, 29, 29, 0.16)');
       c.fillStyle = bossVig;
@@ -1511,14 +1557,27 @@
     c.textAlign = 'right';
     c.fillText(isBoss ? 'BOSS INTERCEPT' : theme.footer, ARENA_W - TILE - 14, ARENA_H - TILE - 14);
 
-    // Friendly staging pad chevron near bottom player spawn
+    // Friendly staging pad chevron near the player spawn, pointing toward the enemy side
+    const pad = canonicalToArena(PORTRAIT_COLS * TILE * 0.5, PORTRAIT_ROWS * TILE - TILE * 2.5);
+    c.translate(pad.x, pad.y);
+    if (landscape) c.rotate(Math.PI / 2);
     c.strokeStyle = 'rgba(132, 204, 22, 0.16)';
     c.lineWidth = 2;
     c.beginPath();
-    c.moveTo(ARENA_W * 0.5 - 18, ARENA_H - TILE * 2.5 + 8);
-    c.lineTo(ARENA_W * 0.5, ARENA_H - TILE * 2.5 - 6);
-    c.lineTo(ARENA_W * 0.5 + 18, ARENA_H - TILE * 2.5 + 8);
+    c.moveTo(-18, 8);
+    c.lineTo(0, -6);
+    c.lineTo(18, 8);
     c.stroke();
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    // Repeat only unmarked asphalt outside the arena, never black letterbox strips.
+    asphaltTile.getContext('2d').drawImage(floorCanvas, 0, 0, TILE * 2, TILE * 2, 0, 0, TILE * 2, TILE * 2);
+    asphaltPattern = ctx.createPattern(asphaltTile, 'repeat');
+  }
+
+  function rebakeArenaFloor() {
+    floorCanvas.width = ARENA_W * 2;
+    floorCanvas.height = ARENA_H * 2;
+    bakeCompoundFloor(state.sectorNum, state.themeId, state.isBossSector);
   }
 
   function clearDecals() {
@@ -1606,56 +1665,289 @@
     resizeCanvas();
   }
 
-  let lastDisplayW = 0;
-  let lastDisplayH = 0;
-  let lastDpr = 0;
-  let lastIsHome = null;
+  function viewportIsLandscape() {
+    return window.innerWidth > window.innerHeight;
+  }
 
-  function resizeCanvas() {
-    const isHome = state.phase === 'start';
-    const wrapRect = stageWrap.getBoundingClientRect();
-    let displayW;
-    let displayH;
+  function landscapeColumnCount() {
+    return arenaLayout.landscapeColumns(window.innerWidth, window.innerHeight);
+  }
 
-    if (isHome) {
-      displayW = Math.max(200, Math.floor(wrapRect.width));
-      displayH = Math.max(240, Math.floor(wrapRect.height));
-    } else {
-      const availW = Math.max(200, wrapRect.width - 8);
-      const availH = Math.max(240, wrapRect.height - 8);
+  function orientSectorSpec(spec, landscape, cols = landscapeColumnCount()) {
+    const isLandscape = spec.grid[0].length > spec.grid.length;
+    if (isLandscape === landscape && (!landscape || spec.grid[0].length === cols)) return spec;
+    const portrait = isLandscape ? arenaLayout.toPortraitGrid(spec.grid) : spec.grid;
+    const grid = landscape ? arenaLayout.toLandscapeGrid(portrait, cols) : portrait;
+    return { ...spec, grid };
+  }
 
-      const aspect = ARENA_W / ARENA_H;
-      displayW = availW;
-      displayH = displayW / aspect;
-      if (displayH > availH) {
-        displayH = availH;
-        displayW = displayH * aspect;
+  function isValidSectorGrid(grid) {
+    if (!Array.isArray(grid) || typeof grid[0] !== 'string') return false;
+    const cols = grid[0].length;
+    if (!grid.every((row) => typeof row === 'string' && row.length === cols)) return false;
+    if (grid.length === PORTRAIT_ROWS && cols === PORTRAIT_COLS) return true;
+    // Each peer derives flank walls locally, so a landscape grid must match that derivation exactly.
+    return grid.length === PORTRAIT_COLS && cols >= MIN_LANDSCAPE_COLS &&
+      arenaLayout.widenGrid(arenaLayout.narrowGrid(grid), cols).every((row, i) => row === grid[i]);
+  }
+
+  function setArenaDimensions(landscape, cols = landscapeColumnCount()) {
+    state.arenaLandscape = landscape;
+    COLS = landscape ? cols : PORTRAIT_COLS;
+    ROWS = landscape ? PORTRAIT_COLS : PORTRAIT_ROWS;
+    ARENA_W = COLS * TILE;
+    ARENA_H = ROWS * TILE;
+  }
+
+  // Maps a point from the canonical portrait layout into the active arena orientation.
+  function canonicalToArena(x, y) {
+    if (!state.arenaLandscape) return { x, y };
+    const narrowWidth = PORTRAIT_ROWS * TILE;
+    return { x: arenaLayout.widenX(narrowWidth - y, narrowWidth, TILE, ARENA_W), y: x };
+  }
+
+  function rotateCanvasBuffer(buffer, clockwise) {
+    const copy = document.createElement('canvas');
+    copy.width = buffer.width;
+    copy.height = buffer.height;
+    copy.getContext('2d').drawImage(buffer, 0, 0);
+    buffer.width = copy.height;
+    buffer.height = copy.width;
+    const c = buffer.getContext('2d');
+    if (clockwise) c.setTransform(0, 1, -1, 0, copy.height, 0);
+    else c.setTransform(0, -1, 1, 0, 0, copy.width);
+    c.drawImage(copy, 0, 0);
+    c.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  // Inserts or removes the flank-lane pixel columns of a 2x arena buffer, keeping wall and core pixels.
+  function remapBufferColumns(buffer, widen, cols) {
+    const copy = document.createElement('canvas');
+    copy.width = buffer.width;
+    copy.height = buffer.height;
+    copy.getContext('2d').drawImage(buffer, 0, 0);
+    const edge = TILE * 2;
+    const flanks = arenaLayout.flankColumns(cols);
+    const left = flanks.left * TILE * 2;
+    const extra = (flanks.left + flanks.right) * TILE * 2;
+    const h = copy.height;
+    buffer.width = copy.width + (widen ? extra : -extra);
+    const core = (widen ? copy.width : buffer.width) - edge * 2;
+    const c = buffer.getContext('2d');
+    c.drawImage(copy, 0, 0, edge, h, 0, 0, edge, h);
+    c.drawImage(copy, widen ? edge : edge + left, 0, core, h, widen ? edge + left : edge, 0, core, h);
+    c.drawImage(copy, copy.width - edge, 0, edge, h, buffer.width - edge, 0, edge, h);
+  }
+
+  function createGridStone(grid, r, c) {
+    const rows = grid.length;
+    const cols = grid[0].length;
+    const isPerimeter = r === 0 || r === rows - 1 || c === 0 || c === cols - 1;
+    const leftWall = c > 0 && grid[r][c - 1] === '#';
+    const rightWall = c < cols - 1 && grid[r][c + 1] === '#';
+    const upWall = r > 0 && grid[r - 1][c] === '#';
+    const downWall = r < rows - 1 && grid[r + 1][c] === '#';
+    const neighborCount = (leftWall ? 1 : 0) + (rightWall ? 1 : 0) + (upWall ? 1 : 0) + (downWall ? 1 : 0);
+    return {
+      x: c * TILE,
+      y: r * TILE,
+      w: TILE,
+      h: TILE,
+      isPerimeter,
+      hazardCorner: !isPerimeter && neighborCount <= 1,
+      seed: (r * 31 + c * 17) & 255,
+    };
+  }
+
+  function addFlankStones(grid) {
+    const cols = grid[0].length;
+    const { left, right } = arenaLayout.flankColumns(cols);
+    for (let r = 0; r < grid.length; r++) {
+      for (let c = 1; c < cols - 1; c++) {
+        if ((c <= left || c >= cols - 1 - right) && grid[r][c] === '#') {
+          state.stones.push({ ...createGridStone(grid, r, c), flank: true });
+        }
+      }
+    }
+  }
+
+  function arenaTanks() {
+    return [state.player, state.player2, ...state.enemies].filter(Boolean);
+  }
+
+  function circleBlockedInArena(x, y, radius, self, avoidTanks) {
+    if (getAllSolidObstacles().some((o) => circleIntersectsRect(x, y, radius, o))) return true;
+    if (state.deflectors.some((d) => circleIntersectsDeflector(x, y, radius, d))) return true;
+    return avoidTanks && arenaTanks().some((t) =>
+      t !== self && t.alive && distSq(x, y, t.x, t.y) < (radius + t.radius) * (radius + t.radius));
+  }
+
+  // Moves a body out of the landscape flank lanes to the nearest clear spot in the shared core.
+  function moveBodyIntoCore(body, radius, search = true, avoidTanks = false) {
+    const { left, right } = arenaLayout.flankColumns(COLS);
+    const min = TILE * (1 + left) + radius;
+    const max = ARENA_W - TILE * (1 + right) - radius;
+    if (body.x >= min && body.x <= max) return true;
+    body.x = clamp(body.x, min, max);
+    if (!circleBlockedInArena(body.x, body.y, radius, body, avoidTanks)) return true;
+    if (!search) return false;
+    let best = null;
+    let bestD2 = Infinity;
+    for (let r = 1; r < ROWS - 1; r++) {
+      for (let c = 1 + left; c < COLS - 1 - right; c++) {
+        const x = (c + 0.5) * TILE;
+        const y = (r + 0.5) * TILE;
+        const d2 = distSq(body.x, body.y, x, y);
+        if (d2 < bestD2 && !circleBlockedInArena(x, y, radius, body, avoidTanks)) {
+          best = { x, y };
+          bestD2 = d2;
+        }
+      }
+    }
+    if (!best) return false;
+    body.x = best.x;
+    body.y = best.y;
+    return true;
+  }
+
+  function clearFlankLanes() {
+    const { left, right } = arenaLayout.flankColumns(COLS);
+    const coreMin = TILE * (1 + left);
+    const coreMax = ARENA_W - TILE * (1 + right);
+    state.stones = state.stones.filter((stone) => !stone.flank);
+    state.tempBarriers = state.tempBarriers.filter((barrier) => {
+      if (barrier.x >= coreMin && barrier.x + barrier.w <= coreMax) return true;
+      barrier.x = clamp(barrier.x, coreMin, coreMax - barrier.w);
+      const overlaps = (o) => o !== barrier && o.x < barrier.x + barrier.w && o.x + o.w > barrier.x &&
+        o.y < barrier.y + barrier.h && o.y + o.h > barrier.y;
+      return !getAllSolidObstacles().some(overlaps) && !state.deflectors.some(overlaps) &&
+        !arenaTanks().some((t) => t.alive && circleIntersectsRect(t.x, t.y, t.radius, barrier));
+    });
+    for (const tank of arenaTanks()) moveBodyIntoCore(tank, tank.radius, true, true);
+    state.bullets = state.bullets.filter((b) => moveBodyIntoCore(b, b.radius || BULLET_RADIUS, false));
+    state.mines = state.mines.filter((m) => moveBodyIntoCore(m, m.radius));
+    state.powerUps = state.powerUps.filter((p) => moveBodyIntoCore(p, p.radius));
+    state.treadMarks = state.treadMarks.filter((t) => t.x >= coreMin && t.x <= coreMax);
+  }
+
+  function rotateArena(landscape, cols = landscapeColumnCount()) {
+    const wasLandscape = state.arenaLandscape;
+    const turning = landscape !== wasLandscape;
+    if (!turning && (!landscape || COLS === cols)) return;
+    const narrowWidth = PORTRAIT_ROWS * TILE;
+    const oldCols = COLS;
+    const oldWidth = ARENA_W;
+    const arenaGroups = () => [
+      state.stones, state.crates, state.tempBarriers, state.enemies, state.deflectors,
+      state.bullets, state.mines, state.powerUps, state.treadMarks, state.popups,
+      particleSystem.particles, particleSystem.shockwaves,
+      [state.player, state.player2].filter(Boolean),
+    ];
+    const mapArenaX = (mapX) => {
+      for (const group of arenaGroups()) {
+        for (const entity of group) arenaLayout.mapEntityX(entity, mapX);
+      }
+      state.mouse.x = mapX(state.mouse.x);
+    };
+
+    if (wasLandscape) {
+      clearFlankLanes();
+      mapArenaX((x) => arenaLayout.narrowX(x, oldWidth, TILE));
+    }
+    // Rigid quarter-turn of the shared core keeps collision distances and shell speeds exact.
+    const turnW = landscape ? PORTRAIT_COLS * TILE : narrowWidth;
+    const turnH = landscape ? narrowWidth : PORTRAIT_COLS * TILE;
+    if (turning) {
+      for (const group of arenaGroups()) {
+        for (const entity of group) {
+          arenaLayout.rotateEntity(entity, turnW, turnH, landscape);
+        }
+      }
+      for (const deflector of state.deflectors) {
+        deflector.kind = arenaLayout.rotateCorner(deflector.kind, landscape);
       }
 
-      displayW = Math.floor(displayW);
-      displayH = Math.floor(displayH);
+      arenaLayout.rotatePoint(state.mouse, turnW, turnH, landscape);
+      state.touch.aimAngle = arenaLayout.rotateAngle(state.touch.aimAngle, landscape);
+      state.p2Touch.aimAngle = arenaLayout.rotateAngle(state.p2Touch.aimAngle, landscape);
+      const shake = { x: state.shakeDirX, y: state.shakeDirY };
+      arenaLayout.rotateVector(shake, landscape);
+      state.shakeDirX = shake.x;
+      state.shakeDirY = shake.y;
+    }
+    state.p2Input.mx = 0;
+    state.p2Input.my = 0;
+    state.p2Input.fireHeld = false;
+    state.p2Input.fireQueued = 0;
+    state.p2Input.aimOn = false;
+    state.p2Input.aimA = state.player2 ? state.player2.turretAngle : 0;
+    state.netTarget = null;
+    clearActiveInputs();
+    state.mouse.active = false;
+
+    if (state.currentSectorSpec) {
+      state.currentSectorSpec = orientSectorSpec(state.currentSectorSpec, landscape, cols);
+    }
+    if (landscape) {
+      mapArenaX((x) => arenaLayout.widenX(x, narrowWidth, TILE, cols * TILE));
+      if (state.currentSectorSpec) addFlankStones(state.currentSectorSpec.grid);
+    }
+    for (const deflector of state.deflectors) {
+      Object.assign(deflector, buildDeflector(deflector.x, deflector.y, TILE, deflector.kind));
+    }
+    if (wasLandscape) remapBufferColumns(decalCanvas, false, oldCols);
+    if (turning) rotateCanvasBuffer(decalCanvas, landscape);
+    if (landscape) remapBufferColumns(decalCanvas, true, cols);
+    setArenaDimensions(landscape, cols);
+    rebakeArenaFloor();
+  }
+
+  function resizeCanvas() {
+    const wrapRect = stageWrap.getBoundingClientRect();
+    if (wrapRect.width <= 0 || wrapRect.height <= 0) return;
+    state.hudBottom = document.getElementById('hud-bar').getBoundingClientRect().bottom + 8;
+    appShell.style.setProperty('--hud-bottom', `${state.hudBottom}px`);
+    const landscape = viewportIsLandscape();
+    const cols = landscape ? landscapeColumnCount() : PORTRAIT_COLS;
+    if (state.netMode !== 'p2p-client' && (state.arenaLandscape !== landscape || COLS !== cols)) {
+      rotateArena(landscape, cols);
+      state.arenaRevision += 1;
+      // An open reliable channel can queue the turn during a temporary ICE disconnect.
+      if (state.netMode === 'p2p-host' && peerComms) {
+        peerComms.sendEvent({
+          t: 'arena',
+          rev: state.arenaRevision,
+          landscape: state.arenaLandscape,
+          cols: COLS,
+          snapshot: buildStateSnapshot(),
+        });
+      }
     }
 
-    const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
-
-    if (displayW === lastDisplayW && displayH === lastDisplayH && dpr === lastDpr && isHome === lastIsHome) {
-      return;
-    }
-    lastDisplayW = displayW;
-    lastDisplayH = displayH;
-    lastDpr = dpr;
-    lastIsHome = isHome;
-
-    canvas.style.width = `${displayW}px`;
-    canvas.style.height = `${displayH}px`;
-    canvas.width = Math.round(displayW * dpr);
-    canvas.height = Math.round(displayH * dpr);
-
+    const isHome = state.phase === 'start';
+    const dpr = window.devicePixelRatio || 1;
+    const fit = arenaLayout.fitCanvas(
+      ARENA_W, ARENA_H,
+      wrapRect.width, wrapRect.height,
+      dpr, isHome
+    );
+    const changed = state.displayW !== fit.displayWidth || state.displayH !== fit.displayHeight ||
+      state.renderScale !== fit.scale || state.dpr !== dpr;
+    canvas.style.width = `${fit.displayWidth}px`;
+    canvas.style.height = `${fit.displayHeight}px`;
+    if (canvas.width !== fit.pixelWidth) canvas.width = fit.pixelWidth;
+    if (canvas.height !== fit.pixelHeight) canvas.height = fit.pixelHeight;
     state.dpr = dpr;
-    state.displayW = displayW;
-    state.displayH = displayH;
-    state.renderScaleX = displayW / ARENA_W;
-    state.renderScaleY = displayH / ARENA_H;
+    state.displayW = fit.displayWidth;
+    state.displayH = fit.displayHeight;
+    state.renderScale = fit.scale;
+    state.renderOffsetX = fit.offsetX;
+    state.renderOffsetY = fit.offsetY;
+    if (changed) {
+      clearActiveInputs();
+      state.mouse.active = false;
+      if (state.netMode === 'p2p-client') clientSendInput();
+    }
 
     if (radarCanvas && radarHud) {
       const rSize = radarHud.clientWidth || 86;
@@ -1666,8 +1958,8 @@
 
   function clientToArena(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    const x = ((clientX - rect.left) / rect.width) * ARENA_W;
-    const y = ((clientY - rect.top) / rect.height) * ARENA_H;
+    const x = ((clientX - rect.left) * state.displayW / rect.width - state.renderOffsetX) / state.renderScale;
+    const y = ((clientY - rect.top) * state.displayH / rect.height - state.renderOffsetY) / state.renderScale;
     return {
       x: clamp(x, 0, ARENA_W),
       y: clamp(y, 0, ARENA_H),
@@ -1755,6 +2047,9 @@
   }
 
   function validateSectorConnectivity(grid) {
+    if (grid[0].length > grid.length) grid = arenaLayout.toPortraitGrid(grid);
+    const ROWS = grid.length;
+    const COLS = grid[0].length;
     const startR = 19;
     const startC = 6;
     if (grid[startR][startC] !== 'P') return false;
@@ -1834,6 +2129,9 @@
   }
 
   function generateProceduralSector(sectorNum, opts = {}) {
+    const ROWS = PORTRAIT_ROWS;
+    const COLS = PORTRAIT_COLS;
+    const landscape = opts.landscape === undefined ? viewportIsLandscape() : opts.landscape;
     const theme = TERRAIN_THEMES[Math.floor((sectorNum - 1) / 2) % TERRAIN_THEMES.length];
 
     // Strict Boss Intercept Rule:
@@ -2010,7 +2308,7 @@
 
       const grid = cells.map((row) => row.join(''));
       if (validateSectorConnectivity(grid)) {
-        return {
+        return orientSectorSpec({
           number: sectorNum,
           name: theme.name,
           themeId: theme.id,
@@ -2018,7 +2316,7 @@
           bossType,
           bossName,
           grid,
-        };
+        }, landscape);
       }
     }
 
@@ -2031,7 +2329,7 @@
       fallbackCells[5][11] = '.';
       fallbackCells[2][6] = BOSS_DEFS[bossType].code;
     }
-    return {
+    return orientSectorSpec({
       number: sectorNum,
       name: theme.name,
       themeId: theme.id,
@@ -2039,7 +2337,7 @@
       bossType,
       bossName,
       grid: fallbackCells.map((row) => row.join('')),
-    };
+    }, landscape);
   }
 
   function createEnemy(type, x, y, sectorNum) {
@@ -2171,15 +2469,25 @@
   function loadWave(sectorOrSpec, keepHp, forceSessionMode = null) {
     const activeMode = forceSessionMode || (state.phase === 'start' ? '1p' : state.sessionMode);
     let sectorDef;
-    if (activeMode === 'duel') {
-      sectorDef = DUEL_WAVE;
-    } else if (sectorOrSpec && typeof sectorOrSpec === 'object' && Array.isArray(sectorOrSpec.grid)) {
+    if (sectorOrSpec && typeof sectorOrSpec === 'object' && Array.isArray(sectorOrSpec.grid)) {
       sectorDef = sectorOrSpec;
+    } else if (activeMode === 'duel') {
+      sectorDef = DUEL_WAVE;
     } else {
       const secNum = Math.max(1, Number(sectorOrSpec) || 1);
       sectorDef = generateProceduralSector(secNum, state.phase === 'start' ? { forceBoss: false, seed: 4049 } : {});
     }
 
+    const landscape = state.netMode === 'p2p-client'
+      ? sectorDef.grid[0].length > sectorDef.grid.length
+      : viewportIsLandscape();
+    const landscapeCols = state.netMode === 'p2p-client' ? sectorDef.grid[0].length : landscapeColumnCount();
+    // Build in canonical order so indexed enemy/crate snapshots match on both peers.
+    sectorDef = orientSectorSpec(sectorDef, false);
+    setArenaDimensions(false);
+    floorCanvas.width = decalCanvas.width = ARENA_W * 2;
+    floorCanvas.height = decalCanvas.height = ARENA_H * 2;
+    if (state.netMode !== 'p2p-client') state.arenaRevision += 1;
     state.currentSectorSpec = sectorDef;
     state.sectorNum = activeMode === 'duel' ? 1 : sectorDef.number;
     state.waveIndex = Math.max(0, state.sectorNum - 1);
@@ -2240,22 +2548,7 @@
         const cy = y + TILE * 0.5;
 
         if (ch === '#') {
-          const isPerimeter = r === 0 || r === ROWS - 1 || c === 0 || c === COLS - 1;
-          const leftWall = c > 0 && grid[r][c - 1] === '#';
-          const rightWall = c < COLS - 1 && grid[r][c + 1] === '#';
-          const upWall = r > 0 && grid[r - 1][c] === '#';
-          const downWall = r < ROWS - 1 && grid[r + 1][c] === '#';
-          const neighborCount = (leftWall ? 1 : 0) + (rightWall ? 1 : 0) + (upWall ? 1 : 0) + (downWall ? 1 : 0);
-          const hazardCorner = !isPerimeter && neighborCount <= 1;
-          state.stones.push({
-            x,
-            y,
-            w: TILE,
-            h: TILE,
-            isPerimeter,
-            hazardCorner,
-            seed: (r * 31 + c * 17) & 255,
-          });
+          state.stones.push(createGridStone(grid, r, c));
         } else if (ch === '1' || ch === '2' || ch === '3' || ch === '4') {
           state.deflectors.push(buildDeflector(x, y, TILE, ch));
         } else if (ch === 'W') {
@@ -2311,9 +2604,15 @@
     state.p2Touch.hasCustomAim = false;
     state.p2Touch.fireReleaseQueued = 0;
     state.p2Touch.aimAngle = activeMode === 'duel' ? Math.PI / 2 : -Math.PI / 2;
+    state.p2Input.mx = 0;
+    state.p2Input.my = 0;
+    state.p2Input.fireHeld = false;
     state.p2Input.fireQueued = 0;
+    state.p2Input.aimOn = false;
     state.p2Input.aimA = state.p2Touch.aimAngle;
+    if (landscape) rotateArena(true, landscapeCols);
     updateHUD();
+    resizeCanvas();
   }
 
   function initAttractSkirmish() {
@@ -2331,10 +2630,11 @@
       '1p'
     );
     if (state.player) {
+      if (state.arenaLandscape) state.player.x = canonicalToArena(0, PORTRAIT_ROWS * TILE * 0.68).x;
+      else state.player.y = ARENA_H * 0.68;
       state.player.spawnX = state.player.x;
       state.player.spawnY = state.player.y;
-      state.player.y = ARENA_H * 0.68;
-      state.player.aiMoveAngle = -Math.PI * 0.35;
+      state.player.aiMoveAngle = -Math.PI * 0.35 + (state.arenaLandscape ? Math.PI / 2 : 0);
       state.player.aiMoveTimer = 0.8;
       state.player.aiRespawnTimer = 0;
       state.player.fireCooldown = 0.45;
@@ -2399,12 +2699,14 @@
     if (state.netMode === 'p2p-host' && peerComms && peerComms.connected && state.currentSectorSpec) {
       peerComms.sendEvent({
         t: 'wave',
+        rev: state.arenaRevision,
         sm: sMode,
         spec: state.currentSectorSpec,
         sc: 0,
         k: 0,
         ds: state.duelScores,
         txt: bannerText,
+        snapshot: buildStateSnapshot(),
       });
     }
   }
@@ -3127,7 +3429,7 @@
   }
 
   function emitNetFx(kind, x, y, extra = {}) {
-    const payload = Object.assign({ t: 'fx', kind, x: r1(x), y: r1(y) }, extra);
+    const payload = Object.assign({ t: 'fx', rev: state.arenaRevision, kind, x: r1(x), y: r1(y) }, extra);
     if (state.netMode === 'p2p-host' && peerComms && peerComms.connected) {
       peerComms.sendEvent(payload);
     }
@@ -3288,13 +3590,13 @@
     if (p && !p.alive) {
       p.aiRespawnTimer = (p.aiRespawnTimer || 0) - dt;
       if (p.aiRespawnTimer <= 0) {
-        p.x = p.spawnX || ARENA_W * 0.5;
-        p.y = ARENA_H * 0.68;
+        p.x = p.spawnX;
+        p.y = p.spawnY;
         p.hp = MAX_HP;
         p.alive = true;
         p.invulnTimer = 1.0;
-        p.hullAngle = -Math.PI * 0.5;
-        p.turretAngle = -Math.PI * 0.5;
+        p.hullAngle = state.arenaLandscape ? 0 : -Math.PI / 2;
+        p.turretAngle = p.hullAngle;
         p.fireCooldown = 0.5;
         particleSystem.emitShockwave(p.x, p.y, 38, 0.35, '#84cc16');
       }
@@ -3567,6 +3869,8 @@
     const activeBullets = state.bullets.filter((b) => b.owner === bulletOwner).length;
 
     if (input.wantsFire && p.fireCooldown <= 0 && activeBullets < maxPlayerBullets) {
+      // Stick releases carry their own heading so the shell leaves exactly where the player aimed.
+      if (Number.isFinite(input.fireAngle)) p.turretAngle = input.fireAngle;
       if (hasSpread) {
         const spreadOffset = 0.17;
         spawnBullet(bulletOwner, p.x, p.y, p.turretAngle - spreadOffset, bulletSpeed, true);
@@ -3649,6 +3953,7 @@
           aimSnapAngle,
           keepCustomAim: state.touch.hasCustomAim,
           wantsFire,
+          fireAngle: state.touch.fireReleaseQueued > 0 ? state.touch.fireAngle : null,
           onFired: () => {
             state.touch.fireReleaseQueued = 0;
           },
@@ -3676,6 +3981,7 @@
             aimSnapAngle: null,
             keepCustomAim: state.p2Input.aimOn,
             wantsFire: state.p2Input.fireHeld || state.p2Input.fireQueued > 0,
+            fireAngle: state.p2Input.fireQueued > 0 ? state.p2Input.fireAngle : null,
             onFired: () => {
               state.p2Input.fireQueued = 0;
             },
@@ -3724,6 +4030,7 @@
             aimSnapAngle: null,
             keepCustomAim: state.p2Touch.hasCustomAim,
             wantsFire,
+            fireAngle: state.p2Touch.fireReleaseQueued > 0 ? state.p2Touch.fireAngle : null,
             onFired: () => {
               state.p2Touch.fireReleaseQueued = 0;
             },
@@ -4507,12 +4814,14 @@
         if (state.netMode === 'p2p-host' && peerComms && peerComms.connected && state.currentSectorSpec) {
           peerComms.sendEvent({
             t: 'wave',
+            rev: state.arenaRevision,
             sm: state.sessionMode,
             spec: state.currentSectorSpec,
             sc: state.score,
             k: state.kills,
             ds: state.duelScores,
             txt,
+            snapshot: buildStateSnapshot(),
           });
         }
       }
@@ -5603,7 +5912,7 @@
     const pillH = 24;
     const gap = 6;
     let startX = 12;
-    const y = 10;
+    const y = (state.hudBottom - state.renderOffsetY) / state.renderScale;
 
     for (let i = 0; i < active.length; i++) {
       const { def, remaining } = active[i];
@@ -5933,21 +6242,14 @@
   }
 
   function render() {
-    if (state.phase === 'start' && state.displayW && state.displayH) {
-      const coverScale = Math.max(state.displayW / ARENA_W, state.displayH / ARENA_H);
-      const offX = (state.displayW - ARENA_W * coverScale) * 0.5;
-      const offY = (state.displayH - ARENA_H * coverScale) * 0.5;
-      ctx.setTransform(
-        state.dpr * coverScale,
-        0,
-        0,
-        state.dpr * coverScale,
-        state.dpr * offX,
-        state.dpr * offY
-      );
-    } else {
-      ctx.setTransform(state.dpr * state.renderScaleX, 0, 0, state.dpr * state.renderScaleY, 0, 0);
-    }
+    const asphaltScale = state.dpr * state.renderScale / 2;
+    ctx.setTransform(asphaltScale, 0, 0, asphaltScale, 0, 0);
+    ctx.fillStyle = asphaltPattern;
+    ctx.fillRect(0, 0, canvas.width / asphaltScale, canvas.height / asphaltScale);
+    ctx.setTransform(
+      state.dpr * state.renderScale, 0, 0, state.dpr * state.renderScale,
+      state.dpr * state.renderOffsetX, state.dpr * state.renderOffsetY
+    );
 
     ctx.fillStyle = '#121619';
     ctx.fillRect(0, 0, ARENA_W, ARENA_H);
@@ -6205,10 +6507,10 @@
     t.buffs.turbo = pkt[11];
   }
 
-  function hostBroadcastState() {
-    if (!peerComms || !peerComms.connected) return;
-    const msg = {
+  function buildStateSnapshot() {
+    return {
       t: 'st',
+      rev: state.arenaRevision,
       seq: state.netSeq++,
       sm: state.sessionMode,
       ph: state.phase,
@@ -6236,7 +6538,11 @@
       mn: state.mines.map((m) => [r1(m.x), r1(m.y), r1(m.armTimer)]),
       tb: state.tempBarriers.map((tb) => [r1(tb.x), r1(tb.y), tb.w, tb.h, tb.hp, tb.maxHp]),
     };
-    peerComms.sendState(msg);
+  }
+
+  function hostBroadcastState() {
+    if (!peerComms || !peerComms.connected) return;
+    peerComms.sendState(buildStateSnapshot());
   }
 
   function clientSendInput() {
@@ -6266,6 +6572,7 @@
     const fireHeld = Boolean(state.mouse.down || state.keys['Space'] || state.touch.canvasAimDown);
     peerComms.sendState({
       t: 'in',
+      rev: state.arenaRevision,
       mx: r1(inX),
       my: r1(inY),
       ts: state.driveMode === 'tank' ? 1 : 0,
@@ -6275,8 +6582,9 @@
     });
   }
 
-  function applyClientStateSnapshot(msg) {
-    if (msg.seq <= state.lastRecvSeq && state.lastRecvSeq - msg.seq < 1000) return;
+  function applyClientStateSnapshot(msg, immediate = false) {
+    // State and reliable arena events use separate channels and can arrive out of order.
+    if (msg.rev !== state.arenaRevision || msg.seq <= state.lastRecvSeq) return;
     state.lastRecvSeq = msg.seq;
     state.netTarget = msg;
 
@@ -6345,7 +6653,28 @@
         };
       });
     }
+    if (immediate) applySnapshotEntities(msg, 1);
     updateHUD();
+  }
+
+  function applySnapshotEntities(snap, alpha) {
+    if (snap.p1) applyTankPacket(state.player, snap.p1, alpha);
+    if (snap.p2) applyTankPacket(state.player2, snap.p2, alpha);
+    if (Array.isArray(snap.en)) {
+      for (let i = 0; i < state.enemies.length && i < snap.en.length; i++) {
+        const e = state.enemies[i];
+        const ep = snap.en[i];
+        e.x += (ep[0] - e.x) * alpha;
+        e.y += (ep[1] - e.y) * alpha;
+        e.hullAngle = normalizeAngle(e.hullAngle + normalizeAngle(ep[2] - e.hullAngle) * alpha);
+        e.turretAngle = normalizeAngle(e.turretAngle + normalizeAngle(ep[3] - e.turretAngle) * alpha);
+        e.alive = Boolean(ep[4]);
+        e.recoil = ep[5];
+        e.aimCharge = ep[6];
+        if (typeof ep[7] === 'number') e.hp = ep[7];
+        if (ep[8] !== undefined) e.sniperLockAngle = ep[8];
+      }
+    }
   }
 
   function updateNetworkClient(dt) {
@@ -6358,28 +6687,7 @@
       if (b.trail.length > 8) b.trail.shift();
     }
 
-    const snap = state.netTarget;
-    if (snap) {
-      const alpha = Math.min(1, dt * 18);
-      if (snap.p1) applyTankPacket(state.player, snap.p1, alpha);
-      if (snap.p2) applyTankPacket(state.player2, snap.p2, alpha);
-      if (Array.isArray(snap.en)) {
-        for (let i = 0; i < state.enemies.length && i < snap.en.length; i++) {
-          const e = state.enemies[i];
-          const ep = snap.en[i];
-          e.x += (ep[0] - e.x) * alpha;
-          e.y += (ep[1] - e.y) * alpha;
-          e.hullAngle = normalizeAngle(e.hullAngle + normalizeAngle(ep[2] - e.hullAngle) * alpha);
-          e.turretAngle = normalizeAngle(e.turretAngle + normalizeAngle(ep[3] - e.turretAngle) * alpha);
-          e.alive = Boolean(ep[4]);
-          e.recoil = ep[5];
-          e.aimCharge = ep[6];
-          if (typeof ep[7] === 'number') e.hp = ep[7];
-          if (ep[8] !== undefined) e.sniperLockAngle = ep[8];
-        }
-      }
-    }
-
+    if (state.netTarget) applySnapshotEntities(state.netTarget, Math.min(1, dt * 18));
     state.netInputAccum += dt;
     if (state.netInputAccum >= 0.032) {
       state.netInputAccum = 0;
@@ -6399,6 +6707,8 @@
 
     const dt = Math.min((now - lastTime) / 1000, 0.05);
     lastTime = now;
+    promoteHeldAimStick(state.touch, aimStickBase, aimStickKnob);
+    promoteHeldAimStick(state.p2Touch, p2AimStickBase, p2AimStickKnob);
 
     if (!state.settingsOpen && !state.paused) {
       if (state.phase === 'playing' || state.phase === 'wave_transition') {
@@ -6596,6 +6906,10 @@
   // Multi-Touch Twin-Stick Aim-and-Release System
   // =========================================================================
   const AIM_DEADZONE = 0.24;
+  // Right-stick releases inside both limits are Quick-Fire taps; longer holds or drags become precision aim.
+  const QUICK_FIRE_MAX_MS = 180;
+  const QUICK_FIRE_MAX_TRAVEL = 12;
+  const QUICK_FIRE_ASSIST_CONE = (15 * Math.PI) / 180;
   const RELOAD_CIRCUMFERENCE = 289.03;
   let lastReloadOffset = -1;
   let lastReloadActive = false;
@@ -6674,52 +6988,124 @@
     driveStickBase.style.bottom = '';
   }
 
-  function updateAimStickFromClient(clientX, clientY) {
-    const stickSize = aimStickBase.offsetWidth || 96;
+  function quickFireTargets(tank) {
+    const targets = state.enemies.filter((enemy) => enemy.alive);
+    if (state.sessionMode === 'duel') {
+      const rival = tank === state.player ? state.player2 : state.player;
+      if (rival && rival.alive) targets.push(rival);
+    }
+    return targets;
+  }
+
+  // Keep the turret heading unless a hostile with a clear line of fire sits inside the forward assist cone.
+  function quickFireAngle(tank) {
+    let bestAngle = tank.turretAngle;
+    let bestOffset = QUICK_FIRE_ASSIST_CONE;
+    for (const target of quickFireTargets(tank)) {
+      const angle = Math.atan2(target.y - tank.y, target.x - tank.x);
+      const offset = Math.abs(normalizeAngle(angle - tank.turretAngle));
+      if (offset <= bestOffset && hasLineOfSight(tank.x, tank.y, target.x, target.y)) {
+        bestAngle = angle;
+        bestOffset = offset;
+      }
+    }
+    return bestAngle;
+  }
+
+  function trackAimStick(ts, base, knob, clientX, clientY) {
+    const stickSize = base.offsetWidth || 96;
     const maxR = stickSize * 0.36;
-    let dx = clientX - state.touch.aimOriginX;
-    let dy = clientY - state.touch.aimOriginY;
+    let dx = clientX - ts.aimOriginX;
+    let dy = clientY - ts.aimOriginY;
     const dist = Math.hypot(dx, dy);
     if (dist > maxR) {
       dx = (dx / dist) * maxR;
       dy = (dy / dist) * maxR;
     }
 
-    const normDist = dist / maxR;
-    aimStickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-    state.touch.aimActive = true;
-    aimStickBase.classList.add('engaged');
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    base.classList.add('engaged');
 
-    if (normDist >= AIM_DEADZONE) {
-      state.touch.aimArmed = true;
-      state.touch.aimAngle = Math.atan2(dy, dx);
-      aimStickBase.classList.add('armed');
-    } else {
-      state.touch.aimArmed = false;
-      aimStickBase.classList.remove('armed');
+    ts.aimLastX = clientX;
+    ts.aimLastY = clientY;
+    ts.aimTravel = Math.max(ts.aimTravel, Math.hypot(clientX - ts.aimStartX, clientY - ts.aimStartY));
+    if (ts.aimTravel >= QUICK_FIRE_MAX_TRAVEL || performance.now() - ts.aimStartTime >= QUICK_FIRE_MAX_MS) {
+      ts.aimPrecision = true;
+    }
+    // A possible tap must not swing the turret or re-tint the laser before it is classified.
+    ts.aimActive = ts.aimPrecision;
+    ts.aimArmed = ts.aimPrecision && dist / maxR >= AIM_DEADZONE;
+    if (ts.aimArmed) ts.aimAngle = Math.atan2(dy, dx);
+    base.classList.toggle('precision', ts.aimPrecision);
+    base.classList.toggle('armed', ts.aimArmed);
+  }
+
+  function beginAimGesture(ts, zone, base, knob, clientX, clientY) {
+    const origin = positionFloatingStick(zone, base, clientX, clientY);
+    ts.aimOriginX = origin.originX;
+    ts.aimOriginY = origin.originY;
+    ts.aimStartTime = performance.now();
+    ts.aimStartX = clientX;
+    ts.aimStartY = clientY;
+    ts.aimTravel = 0;
+    ts.aimPrecision = false;
+    trackAimStick(ts, base, knob, clientX, clientY);
+  }
+
+  // A motionless hold produces no move events, so the frame loop promotes it to precision aim.
+  function promoteHeldAimStick(ts, base, knob) {
+    if (base && ts.aimStartTime !== null && !ts.aimPrecision) {
+      trackAimStick(ts, base, knob, ts.aimLastX, ts.aimLastY);
     }
   }
 
-  function resetAimStick(fireIfArmed = false) {
-    const shouldFire = fireIfArmed && state.touch.aimArmed && state.phase === 'playing';
-    const releaseAngle = state.touch.aimAngle;
+  function resolveAimRelease(ts, base, knob, tank) {
+    if (ts.aimStartTime === null || state.phase !== 'playing') return null;
+    const isTap =
+      !ts.aimPrecision &&
+      performance.now() - ts.aimStartTime < QUICK_FIRE_MAX_MS &&
+      ts.aimTravel < QUICK_FIRE_MAX_TRAVEL;
+    if (isTap) {
+      return tank && tank.alive ? { angle: quickFireAngle(tank), quick: true } : null;
+    }
+    // Classify a hold that outlasted the tap window between frames before reading its armed state.
+    trackAimStick(ts, base, knob, ts.aimLastX, ts.aimLastY);
+    return ts.aimArmed ? { angle: ts.aimAngle, quick: false } : null;
+  }
+
+  function clearAimStick(ts, base, knob) {
+    ts.aimStartTime = null;
+    ts.aimPrecision = false;
+    ts.aimActive = false;
+    ts.aimArmed = false;
+    knob.style.transform = 'translate(0px, 0px)';
+    base.classList.remove('engaged', 'precision', 'armed');
+    base.style.left = '';
+    base.style.top = '';
+    base.style.right = '';
+    base.style.bottom = '';
+  }
+
+  function flashQuickFire(base) {
+    base.classList.remove('quick-fire');
+    void base.offsetWidth; // Reflow so back-to-back taps restart the CSS flash.
+    base.classList.add('quick-fire');
+  }
+
+  function resetAimStick(fireOnRelease = false) {
+    const localTank = state.netMode === 'p2p-client' ? state.player2 : state.player;
+    const shot = fireOnRelease ? resolveAimRelease(state.touch, aimStickBase, aimStickKnob, localTank) : null;
     state.touch.aimTouchId = null;
     state.touch.aimMouseActive = false;
-    state.touch.aimActive = false;
-    state.touch.aimArmed = false;
-    aimStickKnob.style.transform = 'translate(0px, 0px)';
-    aimStickBase.classList.remove('engaged', 'armed');
-    aimStickBase.style.left = '';
-    aimStickBase.style.top = '';
-    aimStickBase.style.right = '';
-    aimStickBase.style.bottom = '';
+    clearAimStick(state.touch, aimStickBase, aimStickKnob);
+    if (!shot) return;
 
-    if (shouldFire) {
-      if (state.netMode === 'p2p-client' && peerComms && peerComms.connected) {
-        peerComms.sendEvent({ t: 'fire', a: r3(releaseAngle) });
-      } else {
-        state.touch.fireReleaseQueued = 0.14;
-      }
+    if (shot.quick) flashQuickFire(aimStickBase);
+    if (state.netMode === 'p2p-client' && peerComms && peerComms.connected) {
+      peerComms.sendEvent({ t: 'fire', rev: state.arenaRevision, a: r3(shot.angle) });
+    } else {
+      state.touch.fireReleaseQueued = 0.14;
+      state.touch.fireAngle = shot.angle;
     }
   }
 
@@ -6754,45 +7140,28 @@
     p2DriveStickBase.style.bottom = '';
   }
 
-  function updateP2AimStick(clientX, clientY) {
+  function resetP2AimStick(fireOnRelease = false) {
     if (!p2AimStickBase || !p2AimStickKnob) return;
-    const stickSize = p2AimStickBase.offsetWidth || 96;
-    const maxR = stickSize * 0.36;
-    let dx = clientX - state.p2Touch.aimOriginX;
-    let dy = clientY - state.p2Touch.aimOriginY;
-    const dist = Math.hypot(dx, dy);
-    if (dist > maxR) {
-      dx = (dx / dist) * maxR;
-      dy = (dy / dist) * maxR;
-    }
-    const normDist = dist / maxR;
-    p2AimStickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-    state.p2Touch.aimActive = true;
-    p2AimStickBase.classList.add('engaged');
+    const shot = fireOnRelease
+      ? resolveAimRelease(state.p2Touch, p2AimStickBase, p2AimStickKnob, state.player2)
+      : null;
+    state.p2Touch.aimTouchId = null;
+    clearAimStick(state.p2Touch, p2AimStickBase, p2AimStickKnob);
+    if (!shot) return;
 
-    if (normDist >= AIM_DEADZONE) {
-      state.p2Touch.aimArmed = true;
-      state.p2Touch.aimAngle = Math.atan2(dy, dx);
-      p2AimStickBase.classList.add('armed');
-    } else {
-      state.p2Touch.aimArmed = false;
-      p2AimStickBase.classList.remove('armed');
-    }
+    if (shot.quick) flashQuickFire(p2AimStickBase);
+    state.p2Touch.fireReleaseQueued = 0.14;
+    state.p2Touch.fireAngle = shot.angle;
   }
 
-  function resetP2AimStick(fireIfArmed = false) {
-    if (!p2AimStickBase || !p2AimStickKnob) return;
-    const shouldFire = fireIfArmed && state.p2Touch.aimArmed && state.phase === 'playing';
-    state.p2Touch.aimTouchId = null;
-    state.p2Touch.aimActive = false;
-    state.p2Touch.aimArmed = false;
-    p2AimStickKnob.style.transform = 'translate(0px, 0px)';
-    p2AimStickBase.classList.remove('engaged', 'armed');
-    p2AimStickBase.style.left = '';
-    p2AimStickBase.style.top = '';
-    p2AimStickBase.style.right = '';
-    p2AimStickBase.style.bottom = '';
-    if (shouldFire) state.p2Touch.fireReleaseQueued = 0.14;
+  for (const base of [aimStickBase, p2AimStickBase]) {
+    if (!base) continue;
+    // Clear the flash class even when hiding the deck cancels it, so a later reveal cannot replay it.
+    const endFlash = (e) => {
+      if (e.target === base) base.classList.remove('quick-fire');
+    };
+    base.addEventListener('animationend', endFlash);
+    base.addEventListener('animationcancel', endFlash);
   }
 
   if (touchZoneP2Left && p2DriveStickBase) {
@@ -6858,10 +7227,7 @@
           const t = e.changedTouches[i];
           if (state.p2Touch.aimTouchId === null) {
             state.p2Touch.aimTouchId = t.identifier;
-            const origin = positionFloatingStick(touchZoneP2Right, p2AimStickBase, t.clientX, t.clientY);
-            state.p2Touch.aimOriginX = origin.originX;
-            state.p2Touch.aimOriginY = origin.originY;
-            updateP2AimStick(t.clientX, t.clientY);
+            beginAimGesture(state.p2Touch, touchZoneP2Right, p2AimStickBase, p2AimStickKnob, t.clientX, t.clientY);
             break;
           }
         }
@@ -6876,7 +7242,8 @@
         if (state.p2Touch.aimTouchId === null) return;
         for (let i = 0; i < e.changedTouches.length; i++) {
           if (e.changedTouches[i].identifier === state.p2Touch.aimTouchId) {
-            updateP2AimStick(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
+            const t = e.changedTouches[i];
+            trackAimStick(state.p2Touch, p2AimStickBase, p2AimStickKnob, t.clientX, t.clientY);
             break;
           }
         }
@@ -6889,7 +7256,9 @@
         e.preventDefault();
         e.stopPropagation();
         for (let i = 0; i < e.changedTouches.length; i++) {
-          if (e.changedTouches[i].identifier === state.p2Touch.aimTouchId) {
+          const t = e.changedTouches[i];
+          if (t.identifier === state.p2Touch.aimTouchId) {
+            trackAimStick(state.p2Touch, p2AimStickBase, p2AimStickKnob, t.clientX, t.clientY);
             resetP2AimStick(true);
             break;
           }
@@ -6980,10 +7349,7 @@
         const t = e.changedTouches[i];
         if (state.touch.aimTouchId === null) {
           state.touch.aimTouchId = t.identifier;
-          const origin = positionFloatingStick(touchZoneRight, aimStickBase, t.clientX, t.clientY);
-          state.touch.aimOriginX = origin.originX;
-          state.touch.aimOriginY = origin.originY;
-          updateAimStickFromClient(t.clientX, t.clientY);
+          beginAimGesture(state.touch, touchZoneRight, aimStickBase, aimStickKnob, t.clientX, t.clientY);
           break;
         }
       }
@@ -7000,7 +7366,7 @@
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
         if (t.identifier === state.touch.aimTouchId) {
-          updateAimStickFromClient(t.clientX, t.clientY);
+          trackAimStick(state.touch, aimStickBase, aimStickKnob, t.clientX, t.clientY);
           break;
         }
       }
@@ -7015,7 +7381,9 @@
       e.stopPropagation();
       if (state.touch.aimTouchId === null) return;
       for (let i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].identifier === state.touch.aimTouchId) {
+        const t = e.changedTouches[i];
+        if (t.identifier === state.touch.aimTouchId) {
+          trackAimStick(state.touch, aimStickBase, aimStickKnob, t.clientX, t.clientY);
           resetAimStick(true);
           break;
         }
@@ -7058,20 +7426,20 @@
     sfx.ensureContext();
     state.mouse.active = false;
     state.touch.aimMouseActive = true;
-    const origin = positionFloatingStick(touchZoneRight, aimStickBase, e.clientX, e.clientY);
-    state.touch.aimOriginX = origin.originX;
-    state.touch.aimOriginY = origin.originY;
-    updateAimStickFromClient(e.clientX, e.clientY);
+    beginAimGesture(state.touch, touchZoneRight, aimStickBase, aimStickKnob, e.clientX, e.clientY);
   });
 
   window.addEventListener('mousemove', (e) => {
     if (state.touch.driveMouseActive) updateDriveStickFromClient(e.clientX, e.clientY);
-    if (state.touch.aimMouseActive) updateAimStickFromClient(e.clientX, e.clientY);
+    if (state.touch.aimMouseActive) trackAimStick(state.touch, aimStickBase, aimStickKnob, e.clientX, e.clientY);
   });
 
-  window.addEventListener('mouseup', () => {
+  window.addEventListener('mouseup', (e) => {
     if (state.touch.driveMouseActive) resetDriveStick();
-    if (state.touch.aimMouseActive) resetAimStick(true);
+    if (state.touch.aimMouseActive) {
+      trackAimStick(state.touch, aimStickBase, aimStickKnob, e.clientX, e.clientY);
+      resetAimStick(true);
+    }
   });
 
   // =========================================================================
@@ -7117,7 +7485,7 @@
         updateHUD();
       },
       onStateMessage: (msg) => {
-        if (msg.t === 'in' && state.netMode === 'p2p-host') {
+        if (msg.t === 'in' && state.netMode === 'p2p-host' && msg.rev === state.arenaRevision) {
           state.p2Input.mx = clamp(Number(msg.mx) || 0, -1, 1);
           state.p2Input.my = clamp(Number(msg.my) || 0, -1, 1);
           state.p2Input.tankSteer = Boolean(msg.ts);
@@ -7129,15 +7497,38 @@
         }
       },
       onEventMessage: (msg) => {
-        if (msg.t === 'fire' && state.netMode === 'p2p-host') {
-          if (typeof msg.a === 'number') {
-            state.p2Input.aimA = msg.a;
+        if (msg.t === 'fire' && state.netMode === 'p2p-host' && msg.rev === state.arenaRevision) {
+          // Reduce first so a hostile peer cannot stall normalizeAngle with an enormous value.
+          const angle = Number.isFinite(msg.a) ? normalizeAngle(msg.a % (Math.PI * 2)) : null;
+          if (angle !== null) {
+            state.p2Input.aimA = angle;
             state.p2Input.aimOn = true;
           }
+          state.p2Input.fireAngle = angle;
           state.p2Input.fireQueued = 0.16;
         } else if (msg.t === 'rematch' && state.netMode === 'p2p-host') {
           startNewGame(state.sessionMode, 'p2p-host');
-        } else if (msg.t === 'wave') {
+        } else if (msg.t === 'arena' && state.netMode === 'p2p-client') {
+          if (!Number.isSafeInteger(msg.rev) || typeof msg.landscape !== 'boolean' ||
+              !Number.isSafeInteger(msg.cols) || (msg.landscape ? msg.cols < MIN_LANDSCAPE_COLS : msg.cols !== PORTRAIT_COLS) ||
+              !msg.snapshot || msg.snapshot.rev !== msg.rev) {
+            console.error('Ricochet Tanks: invalid arena rotation packet');
+            setCommsStatus('error', 'ARENA SYNC FAILED // UPDATE BOTH DEVICES');
+            return;
+          }
+          if (msg.rev <= state.arenaRevision) return;
+          rotateArena(msg.landscape, msg.cols);
+          state.arenaRevision = msg.rev;
+          state.lastRecvSeq = -1;
+          applyClientStateSnapshot(msg.snapshot, true);
+          resizeCanvas();
+        } else if (msg.t === 'wave' && peerComms.role === 'client') {
+          const grid = msg.spec && msg.spec.grid;
+          if (!Number.isSafeInteger(msg.rev) || !isValidSectorGrid(grid) || !msg.snapshot || msg.snapshot.rev !== msg.rev) {
+            console.error('Ricochet Tanks: invalid arena sector packet');
+            setCommsStatus('error', 'ARENA SYNC FAILED // UPDATE BOTH DEVICES');
+            return;
+          }
           // Client receives authoritative sector spec & match start
           state.sessionMode = msg.sm;
           state.netMode = 'p2p-client';
@@ -7147,6 +7538,7 @@
           state.score = msg.sc || 0;
           state.kills = msg.k || 0;
           if (msg.ds) state.duelScores = msg.ds;
+          state.arenaRevision = msg.rev;
           state.lastRecvSeq = -1;
           if (appShell) appShell.classList.remove('is-home');
           if (btnPause) btnPause.classList.remove('paused');
@@ -7158,11 +7550,9 @@
           if (radarHud) radarHud.classList.remove('hidden');
           sfx.ensureContext();
           sfx.startMusic();
+          loadWave(msg.spec, msg.spec.number > 1, msg.sm);
+          applyClientStateSnapshot(msg.snapshot, true);
           syncTouchDeckVisibility();
-          resizeCanvas();
-          const sectorSpec = msg.spec || (msg.w || 0) + 1;
-          const isKeepHp = msg.spec ? msg.spec.number > 1 : (msg.w || 0) > 0;
-          loadWave(sectorSpec, isKeepHp, msg.sm);
           const secNum = state.sectorNum;
           const label =
             msg.txt ||
@@ -7172,7 +7562,7 @@
           addPopup(ARENA_W / 2, ARENA_H * 0.38, label, state.isBossSector ? '#f87171' : '#84cc16', 1.7);
         } else if (msg.t === 'pause') {
           togglePause(Boolean(msg.paused), true);
-        } else if (msg.t === 'fx' && state.netMode === 'p2p-client') {
+        } else if (msg.t === 'fx' && state.netMode === 'p2p-client' && msg.rev === state.arenaRevision) {
           applyLocalOrNetFx(msg);
         } else if (msg.t === 'end' && state.netMode === 'p2p-client') {
           if (msg.kind === 'duel') triggerDuelEnd(msg.winner, msg);
@@ -7537,6 +7927,7 @@
     ro.observe(stageWrap);
   }
   window.addEventListener('resize', scheduleResize);
+  window.addEventListener('orientationchange', scheduleResize);
 
   // Boot: Apply Saved Settings, Lifetime Stats & Slow-Motion Live Skirmish behind Home Screen
   applySettings();
