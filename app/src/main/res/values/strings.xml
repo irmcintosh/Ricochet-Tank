@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Ricochet Tanks</string>
+    <string name="game_webview_description">Ricochet Tanks 2D arena game view</string>
+</resources>

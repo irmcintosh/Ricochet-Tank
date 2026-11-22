@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Ricochet Tanks</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-shell is-home" id="app-shell">
+    <!-- Top Tactical C2 Telemetry Bar (hidden on home screen) -->
+    <header class="hud-bar" id="hud-bar" aria-label="Tactical Telemetry HUD">
+      <div class="hud-stats">
+        <div class="hud-cell hud-wave">
+          <span class="hud-value" id="hud-wave">SECTOR 01 // CONCRETE FOB</span>
+        </div>
+        <div class="hud-cell hud-score">
+          <span class="hud-label">SCORE</span>
+          <span class="hud-value" id="hud-score">0000</span>
+        </div>
+        <div class="hud-cell hud-health">
+          <span class="hud-label" id="hud-health-label">ARMOR</span>
+          <div class="health-pips" id="hud-health" aria-label="Health 3 of 3">
+            <span class="health-pip"></span>
+            <span class="health-pip"></span>
+            <span class="health-pip"></span>
+          </div>
+        </div>
+        <div class="hud-cell hud-health hud-health-p2 hidden" id="hud-p2-cell">
+          <span class="hud-label">P2</span>
+          <div class="health-pips" id="hud-health-p2" aria-label="Player 2 Health 3 of 3">
+            <span class="health-pip"></span>
+            <span class="health-pip"></span>
+            <span class="health-pip"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hud-actions">
+        <span class="hud-ping hidden" id="hud-ping">P2P</span>
+        <button type="button" class="icon-btn" id="btn-touch-toggle" title="Toggle Touch Controls" aria-label="Toggle Touch Controls">
+          PAD
+        </button>
+        <button type="button" class="icon-btn" id="btn-mute" title="Toggle SFX" aria-label="Toggle Sound Effects">
+          SFX
+        </button>
+        <button type="button" class="icon-btn" id="btn-pause" title="Tactical Pause" aria-label="Pause Game">
+          <svg class="hud-pause-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="5" y="4" width="5" height="16" rx="1" />
+            <rect x="14" y="4" width="5" height="16" rx="1" />
+          </svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-settings" title="Audio, UI &amp; Liveries" aria-label="Open Settings">
+          <svg class="hud-gear-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 8.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8zm9.2 4.4l-1.9.7a7.3 7.3 0 0 1-.6 1.5l1 1.8-1.8 1.8-1.8-1a7.3 7.3 0 0 1-1.5.6l-.7 1.9h-2.6l-.7-1.9a7.3 7.3 0 0 1-1.5-.6l-1.8 1-1.8-1.8 1-1.8a7.3 7.3 0 0 1-.6-1.5l-1.9-.7v-2.6l1.9-.7a7.3 7.3 0 0 1 .6-1.5l-1-1.8 1.8-1.8 1.8 1a7.3 7.3 0 0 1 1.5-.6l.7-1.9h2.6l.7 1.9a7.3 7.3 0 0 1 1.5.6l1.8-1 1.8 1.8-1 1.8a7.3 7.3 0 0 1 .6 1.5l1.9.7v2.6z" />
+          </svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-restart-hud" title="Redeploy Mission" aria-label="Restart Game">
+          ↻
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Portrait Compound Viewport -->
+    <main class="stage-wrap" id="stage-wrap">
+      <canvas id="game-canvas" width="560" height="880" aria-label="Ricochet Tanks Tactical Arena"></canvas>
+
+      <!-- Circular Tactical Radar / Minimap -->
+      <div class="radar-hud hidden" id="radar-hud" aria-label="Tactical Radar Minimap">
+        <canvas id="radar-canvas" width="84" height="84"></canvas>
+        <span class="radar-label" id="radar-label">RADAR</span>
+      </div>
+
+      <!-- Boss Intercept Warning Banner -->
+      <div class="boss-banner hidden" id="boss-banner" role="alert" aria-live="assertive">
+        <div class="boss-banner-title" id="boss-banner-title">&#9888; HOSTILE COMMAND TANK DETECTED</div>
+        <div class="boss-banner-sub" id="boss-banner-sub">JUGGERNAUT HEAVY // TWIN-CANNON</div>
+      </div>
+
+      <!-- Minimalist Tactical Title / Home Overlay -->
+      <section class="home-overlay" id="screen-start" aria-label="Ricochet Tanks Home Screen">
+        <div class="home-grid-fx" aria-hidden="true"></div>
+
+        <!-- Top / Upper-Center Hero -->
+        <div class="home-hero">
+          <svg class="home-emblem" viewBox="0 0 64 64" aria-hidden="true">
+            <circle cx="32" cy="32" r="24" class="emblem-ring" />
+            <circle cx="32" cy="32" r="14" class="emblem-ring-inner" />
+            <line x1="32" y1="2" x2="32" y2="14" class="emblem-tick" />
+            <line x1="32" y1="50" x2="32" y2="62" class="emblem-tick" />
+            <line x1="2" y1="32" x2="14" y2="32" class="emblem-tick" />
+            <line x1="50" y1="32" x2="62" y2="32" class="emblem-tick" />
+            <polygon points="32,19 42,37 32,33 22,37" class="emblem-chevron" />
+          </svg>
+          <span class="home-kicker">ARMORED TACTICAL SIM // ENDLESS OPS</span>
+          <h1 class="home-title">RICOCHET<br />TANKS</h1>
+        </div>
+
+        <!-- Middle: Translucent 4-Column Service Record Bar -->
+        <div class="service-bar" aria-label="Service Record">
+          <div class="service-col">
+            <span class="service-label">BEST SEC</span>
+            <span class="service-val cyan" id="stat-lifetime-best">00</span>
+          </div>
+          <div class="service-divider" aria-hidden="true"></div>
+          <div class="service-col">
+            <span class="service-label">KILLS</span>
+            <span class="service-val" id="stat-lifetime-kills">0</span>
+          </div>
+          <div class="service-divider" aria-hidden="true"></div>
+          <div class="service-col">
+            <span class="service-label">CLEARED</span>
+            <span class="service-val green" id="stat-lifetime-waves">0</span>
+          </div>
+          <div class="service-divider" aria-hidden="true"></div>
+          <div class="service-col">
+            <span class="service-label">DEATHS</span>
+            <span class="service-val danger" id="stat-lifetime-deaths">0</span>
+          </div>
+        </div>
+
+        <!-- Bottom Action Deck -->
+        <div class="home-actions">
+          <div class="player-mode-pill" role="group" aria-label="Mission Mode">
+            <button type="button" class="pill-opt active" id="mode-1p">1 PLAYER (CAMPAIGN)</button>
+            <button type="button" class="pill-opt" id="mode-2p">2 PLAYERS (WI-FI / HOTSPOT)</button>
+          </div>
+
+          <div class="drive-pill" role="group" aria-label="Drive Control Mode">
+            <button type="button" class="pill-opt active" id="mode-omni">OMNI DRIVE</button>
+            <button type="button" class="pill-opt" id="mode-tank">TREAD STEER</button>
+          </div>
+
+          <button type="button" class="deploy-btn" id="btn-start">
+            <span class="btn-bracket tl" aria-hidden="true"></span>
+            <span class="btn-bracket tr" aria-hidden="true"></span>
+            <span class="btn-bracket bl" aria-hidden="true"></span>
+            <span class="btn-bracket br" aria-hidden="true"></span>
+            <span class="deploy-text">DEPLOY</span>
+          </button>
+
+          <button type="button" class="intel-btn" id="btn-intel">HOW TO PLAY / INTEL</button>
+        </div>
+      </section>
+
+      <!-- Tactical Comms Link Modal (2-Player Local Wi-Fi / Hotspot WebRTC + Same-Device Fallback) -->
+      <section class="overlay hidden" id="screen-comms" aria-label="Tactical Comms Link Lobby">
+        <div class="modal-card comms-card">
+          <div class="c2-header">
+            <span class="c2-code">C2 // TACTICAL COMMS LINK</span>
+            <button type="button" class="close-x-btn" id="btn-comms-x" aria-label="Close Tactical Comms">&times;</button>
+          </div>
+
+          <p class="comms-banner">
+            Connect both devices to the same Wi-Fi network or enable Mobile Hotspot on the Host device.
+          </p>
+
+          <!-- Selectable 2-Player Mode -->
+          <div class="comms-mode-row" role="group" aria-label="2-Player Match Mode">
+            <button type="button" class="pill-opt active" id="comms-mode-duel">1v1 DUEL</button>
+            <button type="button" class="pill-opt" id="comms-mode-coop">2P CO-OP</button>
+          </div>
+
+          <!-- Connection Status Indicator -->
+          <div class="comms-status idle" id="comms-status-bar">
+            <span class="comms-status-dot" aria-hidden="true"></span>
+            <span class="comms-status-text" id="comms-status-badge">STANDBY // SELECT HOST OR JOIN</span>
+            <span class="comms-rtt" id="comms-rtt"></span>
+          </div>
+
+          <!-- Host vs Join Tabs -->
+          <div class="comms-tabs" role="tablist" aria-label="Peer Role">
+            <button type="button" class="comms-tab active" id="tab-comms-host" role="tab" aria-selected="true">HOST GAME</button>
+            <button type="button" class="comms-tab" id="tab-comms-join" role="tab" aria-selected="false">JOIN GAME</button>
+          </div>
+
+          <!-- HOST PANEL -->
+          <div class="comms-panel" id="panel-comms-host">
+            <button type="button" class="primary-btn comms-btn" id="btn-host-gen">GENERATE HOST CODE</button>
+
+            <div class="comms-code-block hidden" id="comms-host-qr-wrap">
+              <div class="comms-qr-row">
+                <canvas class="comms-qr-canvas" id="comms-host-qr" width="144" height="144" aria-label="Host Session QR Code"></canvas>
+                <div class="comms-qr-meta">
+                  <span class="comms-step-label">STEP 1 // HOST CODE</span>
+                  <textarea class="comms-textarea" id="output-host-offer" readonly rows="3" aria-label="Host Session Code"></textarea>
+                  <div class="comms-mini-actions">
+                    <button type="button" class="mini-btn" id="btn-host-copy">COPY</button>
+                    <button type="button" class="mini-btn" id="btn-host-share">SHARE</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="comms-step-block">
+              <span class="comms-step-label">STEP 2 // PASTE JOINER RESPONSE CODE</span>
+              <textarea class="comms-textarea" id="input-host-answer" rows="2" placeholder="Paste RT2:... response from Player 2" aria-label="Joiner Response Code"></textarea>
+              <div class="comms-mini-actions">
+                <button type="button" class="mini-btn" id="btn-host-paste">PASTE</button>
+                <button type="button" class="mini-btn accent" id="btn-host-link">LINK PEER</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- JOIN PANEL -->
+          <div class="comms-panel hidden" id="panel-comms-join">
+            <div class="comms-step-block">
+              <span class="comms-step-label">STEP 1 // PASTE HOST SESSION CODE</span>
+              <textarea class="comms-textarea" id="input-join-offer" rows="2" placeholder="Paste RT2:... offer from Host" aria-label="Host Session Code Input"></textarea>
+              <div class="comms-mini-actions">
+                <button type="button" class="mini-btn" id="btn-join-paste">PASTE</button>
+                <button type="button" class="mini-btn accent" id="btn-join-gen">GENERATE RESPONSE</button>
+              </div>
+            </div>
+
+            <div class="comms-code-block hidden" id="comms-join-qr-wrap">
+              <div class="comms-qr-row">
+                <canvas class="comms-qr-canvas" id="comms-join-qr" width="144" height="144" aria-label="Joiner Response QR Code"></canvas>
+                <div class="comms-qr-meta">
+                  <span class="comms-step-label">STEP 2 // SEND RESPONSE TO HOST</span>
+                  <textarea class="comms-textarea" id="output-join-answer" readonly rows="3" aria-label="Response Code Output"></textarea>
+                  <div class="comms-mini-actions">
+                    <button type="button" class="mini-btn" id="btn-join-copy">COPY</button>
+                    <button type="button" class="mini-btn" id="btn-join-share">SHARE</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="modal-actions comms-footer-actions">
+            <button type="button" class="primary-btn hidden" id="btn-comms-launch">LAUNCH MISSION</button>
+            <button type="button" class="secondary-btn" id="btn-local-split">LOCAL SPLIT-CONTROLS (SAME DEVICE)</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Dismissible How To Play / Intel Drawer Modal -->
+      <section class="overlay hidden" id="screen-intel" aria-label="Field Manual and Tactical Intel">
+        <div class="modal-card intel-card">
+          <div class="c2-header">
+            <span class="c2-code">TAC-DOC // FIELD INTEL</span>
+            <button type="button" class="close-x-btn" id="btn-intel-x" aria-label="Close Intel">&times;</button>
+          </div>
+
+          <h2 class="modal-title intel-heading">COMBAT BRIEFING</h2>
+          <p class="modal-subtitle">
+            Fight through unlimited procedural sectors and randomized Boss Intercepts (Sector 04+). Bank rounds off concrete barriers and 45&deg; steel deflectors.
+          </p>
+
+          <div class="legend-grid">
+            <div class="legend-item">
+              <span class="swatch swatch-player"></span>
+              <span><strong>NATO MBT</strong> (3 Armor)</span>
+            </div>
+            <div class="legend-item">
+              <span class="swatch swatch-enemy"></span>
+              <span><strong>Aggressors</strong> &amp; Bosses</span>
+            </div>
+            <div class="legend-item">
+              <span class="swatch swatch-concrete"></span>
+              <span><strong>Barriers</strong> &amp; 45&deg; Steel</span>
+            </div>
+            <div class="legend-item">
+              <span class="swatch swatch-crate"></span>
+              <span><strong>Supply Crate</strong> (Buffs)</span>
+            </div>
+          </div>
+
+          <div class="controls-box">
+            <div class="intel-section-row">
+              <strong>TWIN-STICK TOUCH:</strong> Drag <strong>Left Stick</strong> to drive &bull; Drag <strong>Right Stick</strong> to aim your ricochet laser, release to fire (pull back to center to cancel).
+            </div>
+            <div class="intel-section-divider" aria-hidden="true"></div>
+            <div class="intel-section-row">
+              <strong>OMNI DRIVE:</strong> Push the left stick in any 360&deg; direction &mdash; your tank immediately drives that way and auto-aligns its hull.
+            </div>
+            <div class="intel-section-row">
+              <strong>TREAD STEER:</strong> Classic tank steering &mdash; push <strong>Up / Down</strong> on the left stick for forward/reverse, and <strong>Left / Right</strong> to pivot your hull.
+            </div>
+          </div>
+
+          <button type="button" class="primary-btn" id="btn-intel-close">ACKNOWLEDGE</button>
+        </div>
+      </section>
+
+      <!-- Tactical Audio, UI & Liveries Settings Modal -->
+      <section class="overlay settings-overlay hidden" id="screen-settings" aria-label="Settings">
+        <div class="modal-card settings-card">
+          <div class="c2-header">
+            <span class="c2-code">C2 // SYSTEM CONFIG</span>
+            <button type="button" class="close-x-btn" id="btn-settings-x" aria-label="Close Settings">&times;</button>
+          </div>
+
+          <h2 class="modal-title intel-heading">SETTINGS</h2>
+
+          <div class="settings-tabs" role="tablist" aria-label="Settings Categories">
+            <button type="button" class="settings-tab active" id="tab-settings-general" role="tab" aria-selected="true" aria-controls="panel-settings-general">AUDIO / UI</button>
+            <button type="button" class="settings-tab" id="tab-settings-liveries" role="tab" aria-selected="false" aria-controls="panel-settings-liveries">LIVERIES</button>
+          </div>
+
+          <!-- Audio & UI Panel -->
+          <div class="settings-panel" id="panel-settings-general" role="tabpanel" aria-labelledby="tab-settings-general">
+            <div class="settings-group">
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-name">MUSIC CHANNEL</span>
+                  <span class="setting-desc">Tactical synth score</span>
+                </div>
+                <button type="button" class="tac-switch on" id="btn-toggle-music" role="switch" aria-checked="true" aria-label="Toggle Music Channel">
+                  <span class="tac-switch-track">
+                    <span class="tac-switch-thumb"></span>
+                  </span>
+                  <span class="tac-switch-state" id="music-state-label">ON</span>
+                </button>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-name">SFX CHANNEL</span>
+                  <span class="setting-desc">Cannons, ricochets &amp; blasts</span>
+                </div>
+                <button type="button" class="tac-switch on" id="btn-toggle-sfx" role="switch" aria-checked="true" aria-label="Toggle SFX Channel">
+                  <span class="tac-switch-track">
+                    <span class="tac-switch-thumb"></span>
+                  </span>
+                  <span class="tac-switch-state" id="sfx-state-label">ON</span>
+                </button>
+              </div>
+
+              <div class="setting-row setting-row-col">
+                <div class="setting-slider-head">
+                  <div class="setting-meta">
+                    <span class="setting-name">TACTICAL UI OPACITY</span>
+                    <span class="setting-desc">HUD bar, radar &amp; touch controls</span>
+                  </div>
+                  <span class="setting-opacity-val" id="settings-opacity-val">100%</span>
+                </div>
+                <input
+                  type="range"
+                  class="tac-range"
+                  id="slider-ui-opacity"
+                  min="25"
+                  max="100"
+                  step="5"
+                  value="100"
+                  aria-label="Tactical UI Opacity"
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Tank Liveries Panel -->
+          <div class="settings-panel hidden" id="panel-settings-liveries" role="tabpanel" aria-labelledby="tab-settings-liveries">
+            <div class="livery-header-row">
+              <span class="livery-section-label">HULL CAMO PATTERN</span>
+              <span class="livery-active-name" id="livery-active-name">OLIVE</span>
+            </div>
+
+            <div class="livery-grid" role="radiogroup" aria-label="Tank Camouflage Livery">
+              <button type="button" class="livery-card active" id="livery-card-olive" data-livery="olive" role="radio" aria-checked="true">
+                <div class="livery-preview-wrap">
+                  <canvas class="livery-preview-canvas" id="livery-canvas-olive" width="104" height="64" aria-hidden="true"></canvas>
+                  <span class="livery-badge">EQUIPPED</span>
+                </div>
+                <div class="livery-meta">
+                  <span class="livery-title">OLIVE</span>
+                  <span class="livery-sub">NATO Woodland</span>
+                </div>
+              </button>
+
+              <button type="button" class="livery-card" id="livery-card-desert" data-livery="desert" role="radio" aria-checked="false">
+                <div class="livery-preview-wrap">
+                  <canvas class="livery-preview-canvas" id="livery-canvas-desert" width="104" height="64" aria-hidden="true"></canvas>
+                  <span class="livery-badge">EQUIPPED</span>
+                </div>
+                <div class="livery-meta">
+                  <span class="livery-title">DESERT</span>
+                  <span class="livery-sub">Arid Sandstorm</span>
+                </div>
+              </button>
+
+              <button type="button" class="livery-card" id="livery-card-urban" data-livery="urban" role="radio" aria-checked="false">
+                <div class="livery-preview-wrap">
+                  <canvas class="livery-preview-canvas" id="livery-canvas-urban" width="104" height="64" aria-hidden="true"></canvas>
+                  <span class="livery-badge">EQUIPPED</span>
+                </div>
+                <div class="livery-meta">
+                  <span class="livery-title">URBAN</span>
+                  <span class="livery-sub">Concrete Splinter</span>
+                </div>
+              </button>
+
+              <button type="button" class="livery-card" id="livery-card-arctic" data-livery="arctic" role="radio" aria-checked="false">
+                <div class="livery-preview-wrap">
+                  <canvas class="livery-preview-canvas" id="livery-canvas-arctic" width="104" height="64" aria-hidden="true"></canvas>
+                  <span class="livery-badge">EQUIPPED</span>
+                </div>
+                <div class="livery-meta">
+                  <span class="livery-title">ARCTIC</span>
+                  <span class="livery-sub">Tundra Frost</span>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="primary-btn" id="btn-settings-close">RESUME MISSION</button>
+            <button type="button" class="secondary-btn" id="btn-settings-menu">RETURN TO BRIEFING</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tactical Pause Overlay -->
+      <section class="overlay pause-overlay hidden" id="screen-pause" aria-label="Tactical Pause">
+        <div class="modal-card pause-card">
+          <div class="c2-header">
+            <span class="c2-code">C2 // TACTICAL PAUSE</span>
+            <span class="c2-status">STANDBY</span>
+          </div>
+          <h2 class="modal-title intel-heading">OPS PAUSED</h2>
+          <p class="modal-subtitle" id="pause-sector-info">SECTOR 01 // CONCRETE FOB</p>
+
+          <div class="summary-stats pause-stats">
+            <div class="stat-card">
+              <div class="stat-label">SCORE</div>
+              <div class="stat-num" id="pause-score">0000</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">HOSTILES</div>
+              <div class="stat-num" id="pause-enemies">0</div>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="primary-btn" id="btn-pause-resume">RESUME OPS</button>
+            <button type="button" class="secondary-btn" id="btn-pause-settings">SETTINGS &amp; LIVERIES</button>
+            <button type="button" class="secondary-btn" id="btn-pause-restart">REDEPLOY SECTOR 01</button>
+            <button type="button" class="secondary-btn" id="btn-pause-menu">ABORT TO BRIEFING</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Game Over Overlay -->
+      <section class="overlay hidden" id="screen-gameover" aria-label="Mission Failed">
+        <div class="modal-card danger-card">
+          <div class="c2-header">
+            <span class="c2-code danger-text" id="gameover-c2-code">ALERT // HULL BREACH</span>
+            <span class="c2-status danger-text" id="gameover-c2-status">KIA</span>
+          </div>
+          <h2 class="modal-title" id="gameover-title">UNIT LOST</h2>
+          <p class="modal-subtitle" id="gameover-subtitle">
+            Friendly armor neutralized. Review firing lanes and redeploy.
+          </p>
+
+          <div class="summary-stats">
+            <div class="stat-card">
+              <div class="stat-label">SECTOR</div>
+              <div class="stat-num" id="over-wave">01</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">SCORE</div>
+              <div class="stat-num" id="over-score">0</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">HOSTILES</div>
+              <div class="stat-num" id="over-kills">0</div>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="primary-btn danger" id="btn-restart-gameover">REDEPLOY</button>
+            <button type="button" class="secondary-btn" id="btn-menu-gameover">BRIEFING</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Victory Overlay -->
+      <section class="overlay hidden" id="screen-victory" aria-label="Mission Complete">
+        <div class="modal-card victory-card">
+          <div class="c2-header">
+            <span class="c2-code victory-text" id="victory-c2-code">C2 // SECTOR CLEARED</span>
+            <span class="c2-status victory-text" id="victory-c2-status">OBJ COMPLETE</span>
+          </div>
+          <h2 class="modal-title" id="victory-title">VICTORY</h2>
+          <p class="modal-subtitle" id="victory-subtitle">
+            All 5 aggressor waves eliminated. Compound secured.
+          </p>
+
+          <div class="summary-stats">
+            <div class="stat-card">
+              <div class="stat-label">SCORE</div>
+              <div class="stat-num" id="win-score">0</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">ARMOR</div>
+              <div class="stat-num" id="win-hp">3 / 3</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">HOSTILES</div>
+              <div class="stat-num" id="win-kills">0</div>
+            </div>
+          </div>
+
+          <div class="modal-actions">
+            <button type="button" class="primary-btn victory" id="btn-restart-victory">NEW OPERATION</button>
+            <button type="button" class="secondary-btn" id="btn-menu-victory">BRIEFING</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Top Player 2 Twin-Stick Deck (visible only in Same-Device Local Split mode) -->
+      <div class="touch-deck touch-deck-p2" id="touch-deck-p2" aria-label="Player 2 Top Twin-Stick Controls">
+        <div class="touch-zone touch-zone-left" id="touch-zone-p2-left">
+          <div class="stick-base stick-drive stick-p2-drive" id="p2-drive-stick-base">
+            <svg class="stick-ticks" viewBox="0 0 100 100" aria-hidden="true">
+              <circle class="stick-ring-outer" cx="50" cy="50" r="46" />
+              <line x1="50" y1="3" x2="50" y2="10" />
+              <line x1="50" y1="90" x2="50" y2="97" />
+              <line x1="3" y1="50" x2="10" y2="50" />
+              <line x1="90" y1="50" x2="97" y2="50" />
+            </svg>
+            <div class="stick-inner-ring"></div>
+            <span class="stick-badge">P2 DRV</span>
+            <div class="stick-knob" id="p2-drive-stick-knob"></div>
+          </div>
+        </div>
+
+        <div class="touch-zone touch-zone-right" id="touch-zone-p2-right">
+          <div class="stick-base stick-aim stick-p2-aim" id="p2-aim-stick-base">
+            <svg class="stick-ticks" viewBox="0 0 100 100" aria-hidden="true">
+              <circle class="stick-ring-outer" cx="50" cy="50" r="46" />
+              <line x1="50" y1="3" x2="50" y2="10" />
+              <line x1="50" y1="90" x2="50" y2="97" />
+              <line x1="3" y1="50" x2="10" y2="50" />
+              <line x1="90" y1="50" x2="97" y2="50" />
+              <circle class="reload-track" cx="50" cy="50" r="46" />
+              <circle class="reload-progress" id="p2-aim-reload-ring" cx="50" cy="50" r="46" />
+            </svg>
+            <div class="stick-deadzone"></div>
+            <span class="stick-badge">P2 AIM</span>
+            <div class="stick-knob" id="p2-aim-stick-knob"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Twin-Stick Semi-Transparent Tactical Control Deck -->
+      <div class="touch-deck" id="touch-deck" aria-label="Twin-Stick Touch Controls">
+        <div class="touch-zone touch-zone-left" id="touch-zone-left">
+          <div class="stick-base stick-drive" id="drive-stick-base">
+            <svg class="stick-ticks" viewBox="0 0 100 100" aria-hidden="true">
+              <circle class="stick-ring-outer" cx="50" cy="50" r="46" />
+              <line x1="50" y1="3" x2="50" y2="10" />
+              <line x1="50" y1="90" x2="50" y2="97" />
+              <line x1="3" y1="50" x2="10" y2="50" />
+              <line x1="90" y1="50" x2="97" y2="50" />
+              <line x1="17" y1="17" x2="21" y2="21" class="minor" />
+              <line x1="83" y1="17" x2="79" y2="21" class="minor" />
+              <line x1="17" y1="83" x2="21" y2="79" class="minor" />
+              <line x1="83" y1="83" x2="79" y2="79" class="minor" />
+            </svg>
+            <div class="stick-inner-ring"></div>
+            <span class="stick-badge">DRV</span>
+            <div class="stick-knob" id="drive-stick-knob"></div>
+          </div>
+        </div>
+
+        <div class="touch-zone touch-zone-right" id="touch-zone-right">
+          <div class="stick-base stick-aim" id="aim-stick-base">
+            <svg class="stick-ticks" viewBox="0 0 100 100" aria-hidden="true">
+              <circle class="stick-ring-outer" cx="50" cy="50" r="46" />
+              <line x1="50" y1="3" x2="50" y2="10" />
+              <line x1="50" y1="90" x2="50" y2="97" />
+              <line x1="3" y1="50" x2="10" y2="50" />
+              <line x1="90" y1="50" x2="97" y2="50" />
+              <line x1="17" y1="17" x2="21" y2="21" class="minor" />
+              <line x1="83" y1="17" x2="79" y2="21" class="minor" />
+              <line x1="17" y1="83" x2="21" y2="79" class="minor" />
+              <line x1="83" y1="83" x2="79" y2="79" class="minor" />
+              <circle class="reload-track" cx="50" cy="50" r="46" />
+              <circle class="reload-progress" id="aim-reload-ring" cx="50" cy="50" r="46" />
+            </svg>
+            <div class="stick-deadzone"></div>
+            <span class="stick-badge">AIM</span>
+            <div class="stick-knob" id="aim-stick-knob"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="mp_comms.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

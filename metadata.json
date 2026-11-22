@@ -1,0 +1,6 @@
+{
+  "name": "Ricochet Tanks",
+  "description": "A 2D top-down arena tank shooter with bouncing bullets, stone walls, destructible wooden crates, and 5 progressive waves.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
