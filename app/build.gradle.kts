@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.ricochettanks.k7m9xp"
     minSdk = 24
     targetSdk = 36
-    versionCode = 2
-    versionName = "1.0"
+    versionCode = 3
+    versionName = "1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -50,9 +50,15 @@ android {
       signingConfig = signingConfigs.getByName("release")
     }
     debug {
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
-      signingConfig = signingConfigs.getByName("debugConfig")
+      // Preserve AI Studio's debug signing when its keystore is present; otherwise use Android's
+      // default generated debug key for local builds.
+      val debugConfig = signingConfigs.getByName("debugConfig")
+      signingConfig =
+        if (debugConfig.storeFile?.exists() == true) {
+          debugConfig
+        } else {
+          signingConfigs.getByName("debug")
+        }
     }
   }
   compileOptions {

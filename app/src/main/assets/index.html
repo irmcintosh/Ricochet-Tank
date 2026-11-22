@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Ricochet Tanks</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -61,7 +61,7 @@
       </div>
     </header>
 
-    <!-- Main Portrait Compound Viewport -->
+    <!-- Orientation-aware Compound Viewport -->
     <main class="stage-wrap" id="stage-wrap">
       <canvas id="game-canvas" width="560" height="880" aria-label="Ricochet Tanks Tactical Arena"></canvas>
 
@@ -152,7 +152,7 @@
           </div>
 
           <p class="comms-banner">
-            Connect both devices to the same Wi-Fi network or enable Mobile Hotspot on the Host device.
+            Use the same Wi-Fi or Host hotspot. Rotate either device freely; both display the Host's arena.
           </p>
 
           <!-- Selectable 2-Player Mode -->
@@ -245,7 +245,7 @@
 
           <h2 class="modal-title intel-heading">COMBAT BRIEFING</h2>
           <p class="modal-subtitle">
-            Fight through unlimited procedural sectors and randomized Boss Intercepts (Sector 04+). Bank rounds off concrete barriers and 45&deg; steel deflectors.
+            Fight through unlimited sectors and Boss Intercepts (Sector 04+). Bank rounds off barriers and 45&deg; steel. Rotate anytime without restarting your mission.
           </p>
 
           <div class="legend-grid">
@@ -269,7 +269,7 @@
 
           <div class="controls-box">
             <div class="intel-section-row">
-              <strong>TWIN-STICK TOUCH:</strong> Drag <strong>Left Stick</strong> to drive &bull; Drag <strong>Right Stick</strong> to aim your ricochet laser, release to fire (pull back to center to cancel).
+              <strong>TWIN-STICK TOUCH:</strong> Drag <strong>Left Stick</strong> to drive &bull; <strong>Tap Right Stick</strong> to quick-fire along your turret &bull; <strong>Hold or drag</strong> it to aim your ricochet laser, release to fire (pull back to center to cancel).
             </div>
             <div class="intel-section-divider" aria-hidden="true"></div>
             <div class="intel-section-row">
@@ -277,6 +277,9 @@
             </div>
             <div class="intel-section-row">
               <strong>TREAD STEER:</strong> Classic tank steering &mdash; push <strong>Up / Down</strong> on the left stick for forward/reverse, and <strong>Left / Right</strong> to pivot your hull.
+            </div>
+            <div class="intel-section-row">
+              <strong>FULL-SCREEN:</strong> Landscape flank lanes expand to fit your screen. On Android, swipe inward from a system edge to temporarily reveal the navigation controls.
             </div>
           </div>
 
@@ -589,6 +592,7 @@
     </main>
   </div>
 
+  <script src="arena_layout.js"></script>
   <script src="mp_comms.js"></script>
   <script src="game.js"></script>
 </body>
