@@ -4,14 +4,17 @@ import android.annotation.SuppressLint
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -100,6 +103,8 @@ private fun RicochetTanksWebView(onRendererCrash: () -> Unit) {
   val lifecycleOwner = LocalLifecycleOwner.current
   val gameDescription = stringResource(id = R.string.game_webview_description)
 
+  val voiceController = remember { TacticalVoiceController(context.applicationContext) }
+
   val webView = remember {
     WebView(context).apply {
       layoutParams =
@@ -126,6 +131,8 @@ private fun RicochetTanksWebView(onRendererCrash: () -> Unit) {
         displayZoomControls = false
         cacheMode = WebSettings.LOAD_NO_CACHE
       }
+
+      addJavascriptInterface(voiceController, "RicochetVoice")
 
       webViewClient =
         object : WebViewClient() {
@@ -159,6 +166,7 @@ private fun RicochetTanksWebView(onRendererCrash: () -> Unit) {
           webView.resumeTimers()
         }
         Lifecycle.Event.ON_PAUSE -> {
+          voiceController.stop()
           webView.onPause()
           webView.pauseTimers()
         }
@@ -168,6 +176,7 @@ private fun RicochetTanksWebView(onRendererCrash: () -> Unit) {
     lifecycleOwner.lifecycle.addObserver(observer)
     onDispose {
       lifecycleOwner.lifecycle.removeObserver(observer)
+      voiceController.shutdown()
       (webView.parent as? ViewGroup)?.removeView(webView)
       webView.stopLoading()
       webView.destroy()
@@ -186,4 +195,64 @@ private fun RicochetTanksWebView(onRendererCrash: () -> Unit) {
         .testTag("ricochet_tanks_webview")
         .semantics { contentDescription = gameDescription },
   )
+}
+
+private class TacticalVoiceController(context: android.content.Context) {
+  @Volatile
+  private var ready = false
+
+  private var tts: TextToSpeech? = null
+
+  init {
+    try {
+      tts = TextToSpeech(context) { status ->
+        if (status == TextToSpeech.SUCCESS) {
+          val engine = tts ?: return@TextToSpeech
+          val langRes = engine.setLanguage(Locale.US)
+          if (langRes != TextToSpeech.LANG_MISSING_DATA && langRes != TextToSpeech.LANG_NOT_SUPPORTED) {
+            engine.setPitch(0.84f)
+            engine.setSpeechRate(1.06f)
+            ready = true
+          } else {
+            ready = engine.setLanguage(Locale.getDefault()) >= TextToSpeech.LANG_AVAILABLE
+          }
+        }
+      }
+    } catch (t: Throwable) {
+      Log.w("RicochetTanks", "TTS init unavailable: ${t.message}")
+      ready = false
+    }
+  }
+
+  @JavascriptInterface
+  fun speak(phrase: String?) {
+    if (!ready || phrase.isNullOrBlank()) return
+    val cleaned = phrase.trim().take(120)
+    try {
+      val params = Bundle().apply {
+        putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 0.45f)
+      }
+      tts?.speak(cleaned, TextToSpeech.QUEUE_FLUSH, params, "tac_${System.nanoTime()}")
+    } catch (_: Throwable) {
+    }
+  }
+
+  @JavascriptInterface
+  fun stop() {
+    try {
+      tts?.stop()
+    } catch (_: Throwable) {
+    }
+  }
+
+  fun shutdown() {
+    ready = false
+    try {
+      tts?.stop()
+      tts?.shutdown()
+    } catch (_: Throwable) {
+    } finally {
+      tts = null
+    }
+  }
 }

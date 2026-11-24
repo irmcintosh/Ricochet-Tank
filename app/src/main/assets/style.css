@@ -278,6 +278,15 @@ body {
   color: rgba(252, 165, 165, 0.9);
 }
 
+.radar-hud.recon-active {
+  border-color: rgba(250, 204, 21, 0.88);
+  box-shadow: 0 4px 18px rgba(202, 138, 4, 0.45), inset 0 0 14px rgba(250, 204, 21, 0.22);
+}
+
+.radar-hud.recon-active .radar-label {
+  color: rgba(254, 240, 138, 0.96);
+}
+
 .radar-hud.hidden {
   display: none;
 }
@@ -348,6 +357,82 @@ body {
   to {
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.8), 0 0 18px rgba(239, 68, 68, 0.55);
   }
+}
+
+/* Muted Tactical Radio Voiceover Callout Feed */
+.tac-comms-feed {
+  position: absolute;
+  top: var(--hud-bottom, 64px);
+  left: calc(10px + env(safe-area-inset-left, 0px));
+  max-width: calc(100% - 114px);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: 3px;
+  border-left: 2px solid var(--tac-green-bright);
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  border-right: 1px solid rgba(148, 163, 184, 0.16);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(14, 18, 22, 0.82);
+  opacity: var(--tac-ui-opacity, 1);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  z-index: 14;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.tac-comms-feed.hidden {
+  display: none;
+}
+
+.tac-comms-feed.priority-alert {
+  border-left-color: #f87171;
+}
+
+.tac-comms-feed.priority-repair {
+  border-left-color: #34d399;
+}
+
+.tac-comms-led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tac-green-bright);
+  box-shadow: 0 0 6px rgba(132, 204, 22, 0.7);
+  flex-shrink: 0;
+}
+
+.tac-comms-feed.priority-alert .tac-comms-led {
+  background: #f87171;
+  box-shadow: 0 0 6px rgba(248, 113, 113, 0.75);
+}
+
+.tac-comms-feed.priority-repair .tac-comms-led {
+  background: #34d399;
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.75);
+}
+
+.tac-comms-tag {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.tac-comms-text {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #d1d5db;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-shell.has-p2-deck .tac-comms-feed {
+  top: 144px;
 }
 
 /* Minimalist Tactical Title / Home Overlay */
@@ -606,9 +691,21 @@ body {
   border-width: 0 2px 2px 0;
 }
 
-.intel-btn {
+.home-secondary-row {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  gap: 8px;
   width: 100%;
-  min-height: 40px;
+}
+
+.intel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 8px;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 4px;
   background: rgba(18, 22, 25, 0.72);
@@ -616,7 +713,7 @@ body {
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   cursor: pointer;
   transition: border-color 0.12s ease, color 0.12s ease;
 }
@@ -624,6 +721,29 @@ body {
 .intel-btn:active {
   border-color: var(--amber-bright);
   color: var(--amber-bright);
+}
+
+.home-diff-tag {
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(101, 163, 13, 0.24);
+  border: 1px solid rgba(132, 204, 22, 0.45);
+  color: #bef264;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.home-diff-tag.diff-easy {
+  background: rgba(14, 165, 233, 0.22);
+  border-color: rgba(56, 189, 248, 0.48);
+  color: #bae6fd;
+}
+
+.home-diff-tag.diff-veteran {
+  background: rgba(220, 38, 38, 0.24);
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #fecaca;
 }
 
 /* C2 Briefing, Intel & End Overlays */
@@ -1126,6 +1246,56 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.difficulty-active-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid rgba(132, 204, 22, 0.52);
+  background: rgba(63, 98, 18, 0.25);
+  color: #bef264;
+}
+
+.difficulty-active-badge.diff-easy {
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(14, 165, 233, 0.2);
+  color: #bae6fd;
+}
+
+.difficulty-active-badge.diff-veteran {
+  border-color: rgba(248, 113, 113, 0.65);
+  background: rgba(220, 38, 38, 0.24);
+  color: #fecaca;
+}
+
+.difficulty-pill {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  width: 100%;
+  padding: 3px;
+  background: #13171b;
+  border: 1px solid var(--border-hairline);
+  border-radius: 4px;
+}
+
+.difficulty-pill .pill-opt {
+  min-height: 36px;
+}
+
+.difficulty-pill .pill-opt[data-difficulty='easy'].active {
+  background: rgba(14, 165, 233, 0.24);
+  color: #e0f2fe;
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.6);
+}
+
+.difficulty-pill .pill-opt[data-difficulty='veteran'].active {
+  background: rgba(220, 38, 38, 0.28);
+  color: #fee2e2;
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.65);
+}
+
 .tac-switch {
   display: inline-flex;
   align-items: center;
@@ -1214,13 +1384,13 @@ body {
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
 }
 
-/* Semi-Transparent Twin-Stick Tactical Overlay Deck */
+/* Semi-Transparent Left Drive Overlay Deck (Right side open for tap-to-shoot) */
 .touch-deck {
   position: absolute;
   left: env(safe-area-inset-left, 0px);
   right: env(safe-area-inset-right, 0px);
   bottom: env(safe-area-inset-bottom, 0px);
-  height: 152px;
+  height: 210px;
   display: none;
   justify-content: space-between;
   align-items: flex-end;
@@ -1244,27 +1414,32 @@ body {
   touch-action: none;
 }
 
+.touch-deck > .touch-zone-left {
+  width: 50%;
+  max-width: 256px;
+}
+
 .stick-base {
   position: absolute;
-  width: 96px;
-  height: 96px;
+  width: 102px;
+  height: 102px;
   border-radius: 50%;
-  background: rgba(18, 22, 25, 0.62);
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(18, 22, 25, 0.66);
+  border: 1.5px solid rgba(132, 204, 22, 0.38);
   box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.45);
   pointer-events: none;
-  opacity: 0.16;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+  opacity: 0.42;
+  transition: opacity 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease;
 }
 
 .stick-base.engaged,
 .stick-base.quick-fire {
-  opacity: 0.45;
+  opacity: 0.88;
 }
 
 .stick-drive {
-  left: 16px;
-  bottom: 16px;
+  left: 18px;
+  bottom: 18px;
 }
 
 .stick-aim {
@@ -1744,7 +1919,12 @@ body {
   }
 
   .touch-deck {
-    height: 142px;
+    height: 196px;
+  }
+
+  .touch-deck > .touch-zone-left {
+    width: 52%;
+    max-width: 220px;
   }
 
   .touch-deck-p2 {
@@ -1756,13 +1936,13 @@ body {
   }
 
   .stick-base {
-    width: 88px;
-    height: 88px;
+    width: 96px;
+    height: 96px;
   }
 
   .stick-drive {
-    left: 12px;
-    bottom: 14px;
+    left: 14px;
+    bottom: 16px;
   }
 
   .stick-aim {
@@ -1834,7 +2014,12 @@ body {
   }
 
   .touch-deck {
-    height: min(128px, 38vh);
+    height: min(176px, 46vh);
+  }
+
+  .touch-deck > .touch-zone-left {
+    width: 38%;
+    max-width: 236px;
   }
 
   .touch-deck-p2 {
@@ -1843,13 +2028,13 @@ body {
   }
 
   .stick-base {
-    width: clamp(72px, 24vh, 96px);
-    height: clamp(72px, 24vh, 96px);
+    width: clamp(80px, 25vh, 102px);
+    height: clamp(80px, 25vh, 102px);
   }
 
   .stick-drive {
-    left: 12px;
-    bottom: 10px;
+    left: 14px;
+    bottom: 12px;
   }
 
   .stick-aim {
@@ -2038,6 +2223,19 @@ body {
     align-items: stretch;
     padding: 6px;
     gap: 4px;
+  }
+
+  .setting-row-col {
+    grid-column: 1 / -1;
+  }
+
+  .setting-row-difficulty {
+    gap: 5px;
+  }
+
+  .difficulty-pill .pill-opt {
+    min-height: 28px;
+    font-size: 9px;
   }
 
   .setting-name {

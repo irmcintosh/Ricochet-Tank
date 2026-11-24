@@ -357,6 +357,76 @@
       this.playArpeggio([523.25, 659.25, 987.77], 0.055, 0.16);
     }
 
+    playRepair() {
+      this.playArpeggio([392.0, 523.25, 659.25, 783.99], 0.06, 0.17);
+    }
+
+    playShieldUp() {
+      this.playArpeggio([440.0, 587.33, 880.0, 1174.66], 0.05, 0.16);
+    }
+
+    playShieldBlock() {
+      const ctx = this.ensureContext();
+      if (!ctx) return;
+      const dest = this.sfxGain || ctx.destination;
+      const now = ctx.currentTime;
+
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1040, now);
+      osc.frequency.exponentialRampToValueAtTime(420, now + 0.11);
+
+      gain.gain.setValueAtTime(0.16, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 0.13);
+    }
+
+    playReconDrone() {
+      this.playArpeggio([659.25, 880.0, 1318.51, 1760.0], 0.045, 0.14);
+    }
+
+    playRadioSquelch(isClose = false) {
+      const ctx = this.ensureContext();
+      if (!ctx) return;
+      const dest = this.sfxGain || ctx.destination;
+      const now = ctx.currentTime;
+
+      // Subtle low-level military radio mic click + filtered burst
+      const osc = ctx.createOscillator();
+      const oscGain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(isClose ? 980 : 1240, now);
+      osc.frequency.exponentialRampToValueAtTime(isClose ? 720 : 1480, now + 0.032);
+      oscGain.gain.setValueAtTime(0.038, now);
+      oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.038);
+      osc.connect(oscGain);
+      oscGain.connect(dest);
+      osc.start(now);
+      osc.stop(now + 0.042);
+
+      if (this.noiseBuffer) {
+        const noise = ctx.createBufferSource();
+        noise.buffer = this.noiseBuffer;
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1650, now);
+        filter.Q.value = 2.4;
+        const nGain = ctx.createGain();
+        nGain.gain.setValueAtTime(0.045, now);
+        nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+        noise.connect(filter);
+        filter.connect(nGain);
+        nGain.connect(dest);
+        noise.start(now);
+        noise.stop(now + 0.06);
+      }
+    }
+
     playArpeggio(freqs, step, volume) {
       const ctx = this.ensureContext();
       if (!ctx) return;
@@ -728,6 +798,9 @@
   const radarCanvas = document.getElementById('radar-canvas');
   const radarCtx = radarCanvas ? radarCanvas.getContext('2d') : null;
 
+  const hudBar = document.getElementById('hud-bar');
+  const hudStats = document.querySelector('.hud-stats');
+  const hudActions = document.querySelector('.hud-actions');
   const hudWaveCell = document.querySelector('.hud-wave');
   const hudWave = document.getElementById('hud-wave');
   const hudScore = document.getElementById('hud-score');
@@ -745,6 +818,8 @@
   const bossBanner = document.getElementById('boss-banner');
   const bossBannerTitle = document.getElementById('boss-banner-title');
   const bossBannerSub = document.getElementById('boss-banner-sub');
+  const tacCommsFeed = document.getElementById('tac-comms-feed');
+  const tacCommsText = document.getElementById('tac-comms-text');
 
   const screenStart = document.getElementById('screen-start');
   const screenComms = document.getElementById('screen-comms');
@@ -763,6 +838,8 @@
 
   const btnStart = document.getElementById('btn-start');
   const btnIntel = document.getElementById('btn-intel');
+  const btnHomeSettings = document.getElementById('btn-home-settings');
+  const homeSettingsDiff = document.getElementById('home-settings-diff');
   const btnIntelX = document.getElementById('btn-intel-x');
   const btnIntelClose = document.getElementById('btn-intel-close');
   const btnSettingsX = document.getElementById('btn-settings-x');
@@ -779,8 +856,15 @@
   const liveryCardArctic = document.getElementById('livery-card-arctic');
   const btnToggleMusic = document.getElementById('btn-toggle-music');
   const btnToggleSfx = document.getElementById('btn-toggle-sfx');
+  const btnToggleVoice = document.getElementById('btn-toggle-voice');
   const musicStateLabel = document.getElementById('music-state-label');
   const sfxStateLabel = document.getElementById('sfx-state-label');
+  const voiceStateLabel = document.getElementById('voice-state-label');
+  const diffEasyBtn = document.getElementById('diff-easy');
+  const diffNormalBtn = document.getElementById('diff-normal');
+  const diffVeteranBtn = document.getElementById('diff-veteran');
+  const difficultyDescEl = document.getElementById('difficulty-desc');
+  const difficultyActiveBadge = document.getElementById('difficulty-active-badge');
   const sliderUiOpacity = document.getElementById('slider-ui-opacity');
   const settingsOpacityVal = document.getElementById('settings-opacity-val');
   const btnRestartGameOver = document.getElementById('btn-restart-gameover');
@@ -846,12 +930,8 @@
 
   const touchDeck = document.getElementById('touch-deck');
   const touchZoneLeft = document.getElementById('touch-zone-left');
-  const touchZoneRight = document.getElementById('touch-zone-right');
   const driveStickBase = document.getElementById('drive-stick-base');
   const driveStickKnob = document.getElementById('drive-stick-knob');
-  const aimStickBase = document.getElementById('aim-stick-base');
-  const aimStickKnob = document.getElementById('aim-stick-knob');
-  const aimReloadRing = document.getElementById('aim-reload-ring');
 
   const touchDeckP2 = document.getElementById('touch-deck-p2');
   const touchZoneP2Left = document.getElementById('touch-zone-p2-left');
@@ -950,6 +1030,53 @@
     arctic: liveryCardArctic,
   };
 
+  const DIFFICULTY_PROFILES = {
+    easy: {
+      id: 'easy',
+      label: 'EASY',
+      desc: 'Slower enemy fire & lighter squads',
+      fireIntervalMult: 1.4,
+      aimChargeMult: 1.25,
+      bulletSpeedMult: 0.86,
+      spawnDelta: -1,
+      bossEscortDelta: -1,
+      bossChance: 0.22,
+    },
+    normal: {
+      id: 'normal',
+      label: 'NORMAL',
+      desc: 'Standard enemy fire & squad size',
+      fireIntervalMult: 1.0,
+      aimChargeMult: 1.0,
+      bulletSpeedMult: 1.0,
+      spawnDelta: 0,
+      bossEscortDelta: 0,
+      bossChance: 0.3,
+    },
+    veteran: {
+      id: 'veteran',
+      label: 'VETERAN',
+      desc: 'Rapid enemy fire & reinforced squads',
+      fireIntervalMult: 0.72,
+      aimChargeMult: 0.75,
+      bulletSpeedMult: 1.12,
+      spawnDelta: 2,
+      bossEscortDelta: 1,
+      bossChance: 0.38,
+    },
+  };
+
+  function getDifficultyProfile(id) {
+    return DIFFICULTY_PROFILES[id] || DIFFICULTY_PROFILES.normal;
+  }
+
+  function getActiveDifficultyProfile() {
+    if (typeof state !== 'undefined' && state.phase === 'start') {
+      return DIFFICULTY_PROFILES.normal;
+    }
+    return getDifficultyProfile(userSettings.difficulty);
+  }
+
   const SETTINGS_KEY = 'ricochet_tanks_settings_v1';
   let userSettings = loadSettings();
   let activeSettingsTab = 'general';
@@ -959,17 +1086,20 @@
   }
 
   function loadSettings() {
-    const defaults = { sfxEnabled: true, musicEnabled: true, uiOpacity: 100, livery: 'olive' };
+    const defaults = { sfxEnabled: true, musicEnabled: true, voiceEnabled: true, uiOpacity: 100, livery: 'olive', difficulty: 'normal' };
     try {
       const raw = window.localStorage.getItem(SETTINGS_KEY);
       if (!raw) return defaults;
       const parsed = JSON.parse(raw);
       const livery = LIVERY_CATALOG[parsed.livery] ? parsed.livery : 'olive';
+      const difficulty = DIFFICULTY_PROFILES[parsed.difficulty] ? parsed.difficulty : 'normal';
       return {
         sfxEnabled: parsed.sfxEnabled !== false,
         musicEnabled: parsed.musicEnabled !== false,
+        voiceEnabled: parsed.voiceEnabled !== false,
         uiOpacity: clamp(Math.round(Number(parsed.uiOpacity) || 100), 25, 100),
         livery,
+        difficulty,
       };
     } catch (_) {
       return defaults;
@@ -999,6 +1129,20 @@
     if (panelSettingsLiveries) panelSettingsLiveries.classList.toggle('hidden', !isLiveries);
     if (isLiveries) {
       renderLiveryPreviews();
+    }
+  }
+
+  function applyDifficultyToActiveEnemies() {
+    if (typeof state === 'undefined' || state.phase === 'start' || !Array.isArray(state.enemies)) return;
+    const diff = getDifficultyProfile(userSettings.difficulty);
+    for (let i = 0; i < state.enemies.length; i++) {
+      const e = state.enemies[i];
+      if (!e || !e.alive) continue;
+      const baseInterval = e.baseFireInterval || e.fireInterval;
+      const baseBullet = e.baseBulletSpeed || e.bulletSpeed;
+      e.fireInterval = Math.max(0.48, baseInterval * diff.fireIntervalMult);
+      e.bulletSpeed = Math.round(baseBullet * diff.bulletSpeedMult);
+      e.fireCooldown = Math.min(e.fireCooldown, e.fireInterval);
     }
   }
 
@@ -1033,11 +1177,44 @@
     if (sfxStateLabel) {
       sfxStateLabel.textContent = userSettings.sfxEnabled ? 'ON' : 'OFF';
     }
+    if (btnToggleVoice) {
+      btnToggleVoice.classList.toggle('on', userSettings.voiceEnabled);
+      btnToggleVoice.setAttribute('aria-checked', String(userSettings.voiceEnabled));
+    }
+    if (voiceStateLabel) {
+      voiceStateLabel.textContent = userSettings.voiceEnabled ? 'ON' : 'OFF';
+    }
+    if (!userSettings.sfxEnabled || !userSettings.voiceEnabled) {
+      stopTacticalVoiceAudio();
+    }
     if (sliderUiOpacity) {
       sliderUiOpacity.value = String(opacityNum);
     }
     if (settingsOpacityVal) {
       settingsOpacityVal.textContent = `${opacityNum}%`;
+    }
+
+    const diff = getDifficultyProfile(userSettings.difficulty);
+    const diffBtns = { easy: diffEasyBtn, normal: diffNormalBtn, veteran: diffVeteranBtn };
+    Object.keys(diffBtns).forEach((key) => {
+      const btn = diffBtns[key];
+      if (!btn) return;
+      const isActive = key === diff.id;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-checked', String(isActive));
+    });
+    if (difficultyDescEl) {
+      difficultyDescEl.textContent = diff.desc;
+    }
+    if (difficultyActiveBadge) {
+      difficultyActiveBadge.textContent = diff.label;
+      difficultyActiveBadge.classList.toggle('diff-easy', diff.id === 'easy');
+      difficultyActiveBadge.classList.toggle('diff-veteran', diff.id === 'veteran');
+    }
+    if (homeSettingsDiff) {
+      homeSettingsDiff.textContent = diff.label;
+      homeSettingsDiff.classList.toggle('diff-easy', diff.id === 'easy');
+      homeSettingsDiff.classList.toggle('diff-veteran', diff.id === 'veteran');
     }
 
     const activeLivery = getLiveryConfig(userSettings.livery);
@@ -1059,15 +1236,15 @@
   function openSettingsModal() {
     if (!screenSettings) return;
     state.settingsOpen = true;
-    state.keys = Object.create(null);
-    state.mouse.down = false;
-    state.touch.canvasAimDown = false;
-    state.touch.canvasTouchId = null;
-    resetDriveStick();
-    resetAimStick(false);
-    resetP2DriveStick();
-    resetP2AimStick(false);
+    clearActiveInputs();
     applySettings();
+    const isHome = state.phase === 'start';
+    if (btnSettingsClose) {
+      btnSettingsClose.textContent = isHome ? 'APPLY & CLOSE' : 'RESUME MISSION';
+    }
+    if (btnSettingsMenu) {
+      btnSettingsMenu.classList.toggle('hidden', isHome);
+    }
     switchSettingsTab(activeSettingsTab);
     screenSettings.classList.remove('hidden');
   }
@@ -1162,11 +1339,85 @@
     state.touch.canvasAimDown = false;
     state.touch.canvasTouchId = null;
     state.touch.fireReleaseQueued = 0;
+    state.touch.fireAngle = null;
     state.p2Touch.fireReleaseQueued = 0;
+    state.p2Touch.fireAngle = null;
     resetDriveStick();
-    resetAimStick(false);
     resetP2DriveStick();
     resetP2AimStick(false);
+  }
+
+  const voiceHistory = Object.create(null);
+  let voiceFeedTimer = 0;
+  let voiceCooldownTimer = 0;
+  let voiceLastPriority = 0;
+
+  function stopTacticalVoiceAudio() {
+    try {
+      if (window.RicochetVoice && typeof window.RicochetVoice.stop === 'function') {
+        window.RicochetVoice.stop();
+      }
+    } catch (_) {
+    }
+    try {
+      if (window.speechSynthesis && typeof window.speechSynthesis.cancel === 'function') {
+        window.speechSynthesis.cancel();
+      }
+    } catch (_) {
+    }
+  }
+
+  function hideTacticalVoiceBanner() {
+    voiceFeedTimer = 0;
+    if (tacCommsFeed) {
+      tacCommsFeed.classList.add('hidden');
+      tacCommsFeed.classList.remove('priority-alert', 'priority-repair');
+    }
+  }
+
+  function triggerTacticalVoice(key, displayText, spokenPhrase, options = {}) {
+    if (typeof state !== 'undefined' && state.phase === 'start') return;
+    const priority = options.priority || 1;
+    const minIntervalMs = options.cooldownMs || 4500;
+    const tone = options.tone || 'normal'; // 'normal' | 'alert' | 'repair'
+    const now = performance.now();
+
+    if (voiceHistory[key] && now - voiceHistory[key] < minIntervalMs) return;
+    if (voiceCooldownTimer > 0 && priority < voiceLastPriority && priority < 3) return;
+
+    voiceHistory[key] = now;
+    voiceCooldownTimer = priority >= 3 ? 1.4 : 1.9;
+    voiceLastPriority = priority;
+    voiceFeedTimer = priority >= 3 ? 2.8 : 2.3;
+
+    if (tacCommsFeed && tacCommsText) {
+      tacCommsText.textContent = displayText.toUpperCase();
+      tacCommsFeed.classList.remove('hidden', 'priority-alert', 'priority-repair');
+      if (tone === 'alert') tacCommsFeed.classList.add('priority-alert');
+      else if (tone === 'repair') tacCommsFeed.classList.add('priority-repair');
+    }
+
+    if (!userSettings.sfxEnabled || !userSettings.voiceEnabled) return;
+
+    sfx.playRadioSquelch(tone === 'alert');
+    try {
+      if (window.RicochetVoice && typeof window.RicochetVoice.speak === 'function') {
+        window.RicochetVoice.speak(spokenPhrase);
+        return;
+      }
+    } catch (_) {
+    }
+    try {
+      if (window.speechSynthesis && typeof window.SpeechSynthesisUtterance === 'function') {
+        window.speechSynthesis.cancel();
+        const utter = new window.SpeechSynthesisUtterance(spokenPhrase);
+        utter.volume = 0.36;
+        utter.pitch = 0.82;
+        utter.rate = 1.04;
+        window.speechSynthesis.speak(utter);
+      }
+    } catch (_) {
+    }
   }
 
   function togglePause(forceVal = null, fromRemote = false) {
@@ -1182,6 +1433,7 @@
 
     if (state.paused) {
       sfx.stopMusic();
+      stopTacticalVoiceAudio();
       const theme = getThemeById(state.themeId);
       const secPad = String(state.sectorNum).padStart(2, '0');
       if (pauseSectorInfo) {
@@ -1224,6 +1476,8 @@
     state.player2 = null;
     state.settingsOpen = false;
     sfx.stopMusic();
+    stopTacticalVoiceAudio();
+    hideTacticalVoiceBanner();
     state.score = 0;
     state.kills = 0;
     state.damageFlash = 0;
@@ -1291,6 +1545,8 @@
     currentSectorSpec: null,
     score: 0,
     kills: 0,
+    recentKillCount: 0,
+    recentKillTimer: 0,
     transitionTimer: 0,
     gameOverDelay: 0,
     shakeTime: 0,
@@ -1619,6 +1875,46 @@
     c.beginPath();
     c.arc(0, 0, radius * 0.28, 0, Math.PI * 2);
     c.fill();
+    c.restore();
+  }
+
+  function stampCrateSplinters(x, y) {
+    const c = decalCtx;
+    c.save();
+    c.setTransform(2, 0, 0, 2, 0, 0);
+    c.translate(x, y);
+
+    const woodColors = ['rgba(120, 82, 42, 0.52)', 'rgba(84, 92, 56, 0.5)', 'rgba(146, 102, 54, 0.45)'];
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+      const dist = 5 + Math.random() * 13;
+      const len = 5 + Math.random() * 6;
+      const wid = 1.4 + Math.random() * 1.4;
+      c.save();
+      c.translate(Math.cos(a) * dist, Math.sin(a) * dist);
+      c.rotate(a + (Math.random() - 0.5) * 1.2);
+      c.fillStyle = woodColors[i % woodColors.length];
+      c.fillRect(-len * 0.5, -wid * 0.5, len, wid);
+      c.restore();
+    }
+
+    // Two bent iron corner-bracket marks
+    c.strokeStyle = 'rgba(31, 41, 55, 0.58)';
+    c.lineWidth = 1.3;
+    for (let i = 0; i < 2; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const dist = 6 + Math.random() * 10;
+      c.save();
+      c.translate(Math.cos(a) * dist, Math.sin(a) * dist);
+      c.rotate(Math.random() * Math.PI * 2);
+      c.beginPath();
+      c.moveTo(-3, 0);
+      c.lineTo(0, 0);
+      c.lineTo(0, 3);
+      c.stroke();
+      c.restore();
+    }
+
     c.restore();
   }
 
@@ -1997,6 +2293,42 @@
       accent: '#ecfccb',
       glow: 'rgba(132, 204, 22, 0.32)',
     },
+    repair: {
+      type: 'repair',
+      label: 'ARMOR +1!',
+      short: 'REPAIR',
+      duration: 0,
+      color: '#10b981',
+      accent: '#a7f3d0',
+      glow: 'rgba(16, 185, 129, 0.34)',
+    },
+    piercing: {
+      type: 'piercing',
+      label: 'PIERCING ROUNDS!',
+      short: 'PIERCE',
+      duration: 10.0,
+      color: '#c084fc',
+      accent: '#f3e8ff',
+      glow: 'rgba(192, 132, 252, 0.36)',
+    },
+    shield: {
+      type: 'shield',
+      label: 'SHIELD 10S!',
+      short: 'SHIELD',
+      duration: 10.0,
+      color: '#22d3ee',
+      accent: '#cffafe',
+      glow: 'rgba(34, 211, 238, 0.38)',
+    },
+    recon: {
+      type: 'recon',
+      label: 'RECON DRONE 15S!',
+      short: 'RECON',
+      duration: 15.0,
+      color: '#facc15',
+      accent: '#fef9c3',
+      glow: 'rgba(250, 204, 21, 0.38)',
+    },
   };
 
   function createPlayer(x, y, preserveHp = MAX_HP, prevBuffs = null, initialAngle = -Math.PI / 2) {
@@ -2017,8 +2349,15 @@
       treadDistAccum: 0,
       antennaSway: 0,
       buffs: prevBuffs
-        ? { rapid: prevBuffs.rapid || 0, spread: prevBuffs.spread || 0, turbo: prevBuffs.turbo || 0 }
-        : { rapid: 0, spread: 0, turbo: 0 },
+        ? {
+            rapid: prevBuffs.rapid || 0,
+            spread: prevBuffs.spread || 0,
+            turbo: prevBuffs.turbo || 0,
+            piercing: prevBuffs.piercing || 0,
+            shield: prevBuffs.shield || 0,
+            recon: prevBuffs.recon || 0,
+          }
+        : { rapid: 0, spread: 0, turbo: 0, piercing: 0, shield: 0, recon: 0 },
     };
   }
 
@@ -2134,16 +2473,18 @@
     const landscape = opts.landscape === undefined ? viewportIsLandscape() : opts.landscape;
     const theme = TERRAIN_THEMES[Math.floor((sectorNum - 1) / 2) % TERRAIN_THEMES.length];
 
+    const diff = opts.difficulty ? getDifficultyProfile(opts.difficulty) : getActiveDifficultyProfile();
+
     // Strict Boss Intercept Rule:
     // Sectors 01-03: NEVER spawn a boss.
-    // Sector 04+: 30% chance OR guaranteed if 4 sectors passed since last boss.
+    // Sector 04+: probability scaled by Difficulty OR guaranteed if 4 sectors passed since last boss.
     let isBoss = false;
     let bossType = null;
     let bossName = '';
     if (opts.forceBoss !== undefined) {
       isBoss = Boolean(opts.forceBoss);
     } else if (sectorNum >= 4) {
-      isBoss = state.sectorsSinceLastBoss >= 4 || Math.random() < 0.30;
+      isBoss = state.sectorsSinceLastBoss >= 4 || Math.random() < diff.bossChance;
     }
 
     if (isBoss) {
@@ -2267,10 +2608,11 @@
         }
         cells[2][6] = BOSS_DEFS[bossType].code;
 
-        const escortCount = Math.min(3, 1 + Math.floor(sectorNum / 4));
+        const baseEscortCount = Math.min(3, 1 + Math.floor(sectorNum / 4));
+        const escortCount = clamp(baseEscortCount + diff.bossEscortDelta, 0, 4);
         let placedEscorts = 0;
         const escortTypes = sectorNum >= 6 ? ['E', 'H', 'T'] : ['T', 'E'];
-        for (let tries = 0; tries < 45 && placedEscorts < escortCount; tries++) {
+        for (let tries = 0; tries < 60 && placedEscorts < escortCount; tries++) {
           const slot = spawnSlots[Math.floor(rng() * spawnSlots.length)];
           if (!slot) break;
           const [er, ec] = slot;
@@ -2279,7 +2621,8 @@
           placedEscorts++;
         }
       } else {
-        const enemyCount = Math.min(7, 3 + Math.floor((sectorNum - 1) * 0.65));
+        const baseEnemyCount = Math.min(7, 3 + Math.floor((sectorNum - 1) * 0.65));
+        const enemyCount = clamp(baseEnemyCount + diff.spawnDelta, 2, 9);
         let pool;
         if (sectorNum === 1) pool = ['T', 'T', 'E'];
         else if (sectorNum === 2) pool = ['E', 'T', 'E', 'H'];
@@ -2288,7 +2631,7 @@
         else pool = ['H', 'C', 'E', 'H', 'T'];
 
         let placed = 0;
-        for (let tries = 0; tries < 60 && placed < enemyCount; tries++) {
+        for (let tries = 0; tries < 90 && placed < enemyCount; tries++) {
           const slot = spawnSlots[Math.floor(rng() * spawnSlots.length)];
           if (!slot) break;
           const [er, ec] = slot;
@@ -2430,7 +2773,10 @@
       },
     };
     const cfg = configs[type] || configs.patrol;
+    const diff = getActiveDifficultyProfile();
     const startAngle = Math.PI / 2;
+    const scaledFireInterval = Math.max(0.48, cfg.fireInterval * diff.fireIntervalMult);
+    const scaledBulletSpeed = Math.round(cfg.bulletSpeed * diff.bulletSpeedMult);
     return {
       type,
       x,
@@ -2447,13 +2793,15 @@
       moveAngle: startAngle,
       moveTimer: 0.4 + Math.random() * 1.2,
       speed: cfg.speed,
-      bulletSpeed: cfg.bulletSpeed,
-      fireInterval: cfg.fireInterval,
-      fireCooldown: 0.75 + Math.random() * 0.65,
+      baseBulletSpeed: cfg.bulletSpeed,
+      bulletSpeed: scaledBulletSpeed,
+      baseFireInterval: cfg.fireInterval,
+      fireInterval: scaledFireInterval,
+      fireCooldown: (0.75 + Math.random() * 0.65) * diff.fireIntervalMult,
       aimCharge: 0,
       burstRemaining: 0,
       burstTimer: 0,
-      deployCooldown: type === 'boss_vanguard' ? 2.4 : 0,
+      deployCooldown: type === 'boss_vanguard' ? 2.4 * diff.fireIntervalMult : 0,
       sniperLockAngle: null,
       rotSpeed: cfg.rotSpeed,
       points: cfg.points,
@@ -2503,10 +2851,17 @@
         state.bossBannerTimer = 3.2;
         const bDef = BOSS_DEFS[state.bossType];
         setBossBannerVisible(true, state.bossName, bDef ? bDef.sub : '');
+        triggerTacticalVoice('boss_intercept', 'HOSTILE COMMAND TANK DETECTED', 'Warning. Hostile command tank detected.', { priority: 3, cooldownMs: 2500, tone: 'alert' });
       } else {
         state.sectorsSinceLastBoss += 1;
         state.bossBannerTimer = 0;
         setBossBannerVisible(false);
+        const secNum = state.sectorNum;
+        if (secNum === 1) {
+          triggerTacticalVoice('sector_deploy', 'SECTOR 01 // ENGAGE', 'All units advance. Sector one active.', { priority: 1, cooldownMs: 1200 });
+        } else {
+          triggerTacticalVoice('sector_deploy', `SECTOR ${String(secNum).padStart(2, '0')} ACTIVE`, `Advancing to sector ${secNum}.`, { priority: 1, cooldownMs: 1200 });
+        }
       }
       recordBestSector(state.sectorNum);
     } else {
@@ -2671,11 +3026,14 @@
     sfx.startMusic();
     state.score = 0;
     state.kills = 0;
+    state.recentKillCount = 0;
+    state.recentKillTimer = 0;
     state.sectorsSinceLastBoss = 0;
     state.lastBossType = null;
     state.cratesSinceLastDrop = 0;
     state.lastDropType = null;
     state.popups = [];
+    hideTacticalVoiceBanner();
     state.lastRecvSeq = -1;
     screenStart.classList.add('hidden');
     screenGameOver.classList.add('hidden');
@@ -2774,11 +3132,13 @@
   // =========================================================================
   // Line of Sight, Raycast Laser Rangefinder & Obstacles (Rect + 45° Deflectors)
   // =========================================================================
-  function getAllSolidObstacles() {
+  function getAllSolidObstacles(ignoreCrates = false) {
     const list = [];
     for (let i = 0; i < state.stones.length; i++) list.push(state.stones[i]);
-    for (let i = 0; i < state.crates.length; i++) {
-      if (state.crates[i].hp > 0) list.push(state.crates[i]);
+    if (!ignoreCrates) {
+      for (let i = 0; i < state.crates.length; i++) {
+        if (state.crates[i].hp > 0) list.push(state.crates[i]);
+      }
     }
     for (let i = 0; i < state.tempBarriers.length; i++) {
       if (state.tempBarriers[i].hp > 0) list.push(state.tempBarriers[i]);
@@ -2816,8 +3176,8 @@
   }
 
   // Exact ray-vs-AABB + ray-vs-45° Triangle intersection for crisp laser sights & ricochets
-  function raycastObstacles(ox, oy, dx, dy, maxDist) {
-    const obstacles = getAllSolidObstacles();
+  function raycastObstacles(ox, oy, dx, dy, maxDist, ignoreCrates = false) {
+    const obstacles = getAllSolidObstacles(ignoreCrates);
     let bestT = maxDist;
     let hitNormalX = 0;
     let hitNormalY = 0;
@@ -3039,135 +3399,209 @@
       }
     }
 
-    emitConcreteRicochet(x, y, normalX, normalY, isFinalHit = false) {
-      const baseAngle =
-        Math.abs(normalX) > 0.01 || Math.abs(normalY) > 0.01
-          ? Math.atan2(normalY, normalX)
-          : Math.random() * Math.PI * 2;
+    emitStoneWallImpact(x, y, normalX, normalY, isFinalHit = false, outVx = 0, outVy = 0) {
+      const hasNormal = Math.abs(normalX) > 0.01 || Math.abs(normalY) > 0.01;
+      const normalAngle = hasNormal ? Math.atan2(normalY, normalX) : Math.random() * Math.PI * 2;
+      const velMag = Math.hypot(outVx, outVy);
+      const bounceBias = velMag > 10 ? Math.atan2(outVy, outVx) : normalAngle;
 
-      // Metallic spark shower
-      const sparkCount = isFinalHit ? 8 : 11;
-      const sparkColors = isFinalHit ? ['#fb923c', '#fde047', '#ffffff'] : ['#fde047', '#fbbf24', '#ffffff'];
+      // Incandescent contact flash on stone wall surface
+      this.addParticle({
+        x: x + normalX * 1.5,
+        y: y + normalY * 1.5,
+        vx: 0,
+        vy: 0,
+        drag: 1,
+        size: isFinalHit ? 10 : 8,
+        life: 0.075,
+        maxLife: 0.075,
+        color: isFinalHit ? '#fed7aa' : '#fef9c3',
+        shape: 'flash',
+        rot: 0,
+        vRot: 0,
+      });
+
+      // High-velocity directional metallic ricochet spark streaks
+      const sparkCount = isFinalHit ? 11 : 14;
+      const sparkColors = isFinalHit
+        ? ['#fb923c', '#fde047', '#ffffff', '#f97316']
+        : ['#fde047', '#fbbf24', '#ffffff', '#fef08a'];
       for (let i = 0; i < sparkCount; i++) {
-        const a = baseAngle + (Math.random() - 0.5) * 2.0;
-        const spd = 110 + Math.random() * 190;
-        const life = 0.13 + Math.random() * 0.11;
+        const useBias = velMag > 10 && i % 3 === 0;
+        const centerAng = useBias ? bounceBias : normalAngle;
+        const a = centerAng + (Math.random() - 0.5) * 1.85;
+        const spd = 125 + Math.random() * 215;
+        const life = 0.13 + Math.random() * 0.12;
         this.addParticle({
           x,
           y,
           vx: Math.cos(a) * spd,
           vy: Math.sin(a) * spd,
           drag: 0.87,
-          size: 2.0 + Math.random() * 2.4,
+          size: 2.0 + Math.random() * 2.2,
           life,
           maxLife: life,
           color: sparkColors[i % sparkColors.length],
-          shape: 'spark',
+          shape: 'streak',
           rot: a,
           vRot: 0,
         });
       }
 
-      // Concrete chips & dust puff
-      const chipColors = ['#9ca3af', '#6b7280', '#d1d5db'];
-      for (let i = 0; i < 4; i++) {
-        const a = baseAngle + (Math.random() - 0.5) * 1.8;
-        const spd = 50 + Math.random() * 105;
-        const life = 0.18 + Math.random() * 0.12;
+      // Chipped stone / concrete masonry chunks spraying off the wall
+      const chunkColors = ['#9ca3af', '#6b7280', '#d1d5db', '#4b5563'];
+      const chunkCount = isFinalHit ? 8 : 6;
+      for (let i = 0; i < chunkCount; i++) {
+        const a = normalAngle + (Math.random() - 0.5) * 1.95;
+        const spd = 55 + Math.random() * 125;
+        const life = 0.2 + Math.random() * 0.15;
         this.addParticle({
-          x,
-          y,
+          x: x + normalX * 1.5,
+          y: y + normalY * 1.5,
           vx: Math.cos(a) * spd,
           vy: Math.sin(a) * spd,
-          drag: 0.89,
-          size: 2.5 + Math.random() * 2.5,
+          drag: 0.88,
+          size: 2.6 + Math.random() * 2.8,
           life,
           maxLife: life,
-          color: chipColors[i % chipColors.length],
-          shape: 'triangle',
+          color: chunkColors[i % chunkColors.length],
+          shape: 'stoneChunk',
           rot: Math.random() * Math.PI * 2,
-          vRot: (Math.random() - 0.5) * 14,
+          vRot: (Math.random() - 0.5) * 16,
         });
       }
 
-      for (let i = 0; i < 2; i++) {
-        const a = baseAngle + (Math.random() - 0.5) * 1.2;
-        const spd = 25 + Math.random() * 45;
-        const life = 0.24 + Math.random() * 0.12;
+      // Pulverized stone dust plume
+      for (let i = 0; i < 4; i++) {
+        const a = normalAngle + (Math.random() - 0.5) * 1.3;
+        const spd = 22 + Math.random() * 52;
+        const life = 0.24 + Math.random() * 0.14;
         this.addParticle({
-          x,
-          y,
+          x: x + normalX * 2,
+          y: y + normalY * 2,
           vx: Math.cos(a) * spd,
           vy: Math.sin(a) * spd,
           drag: 0.91,
-          size: 5 + Math.random() * 4,
+          size: 4.5 + Math.random() * 4.5,
           life,
           maxLife: life,
-          color: 'rgba(156, 163, 175, 0.45)',
+          color: 'rgba(156, 163, 175, 0.48)',
           shape: 'smoke',
           rot: 0,
           vRot: 0,
         });
       }
 
-      this.emitShockwave(x, y, isFinalHit ? 14 : 18, 0.11, isFinalHit ? '#fb923c' : '#fde047', 2.0);
+      this.emitShockwave(x, y, isFinalHit ? 16 : 20, 0.12, isFinalHit ? '#fb923c' : '#fde047', 2.0);
     }
 
-    emitCrateHitDebris(x, y) {
-      const colors = ['#4b5332', '#656e43', '#374151'];
-      for (let i = 0; i < 5; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const spd = 65 + Math.random() * 135;
-        const life = 0.18 + Math.random() * 0.12;
+    emitConcreteRicochet(x, y, normalX, normalY, isFinalHit = false, outVx = 0, outVy = 0) {
+      this.emitStoneWallImpact(x, y, normalX, normalY, isFinalHit, outVx, outVy);
+    }
+
+    emitCrateHitDebris(x, y, dirVx = 0, dirVy = 0) {
+      const colors = ['#8b5a2b', '#a16207', '#656e43', '#4b5332', '#374151'];
+      const hasDir = Math.hypot(dirVx, dirVy) > 10;
+      const dirAngle = hasDir ? Math.atan2(dirVy, dirVx) : 0;
+
+      for (let i = 0; i < 6; i++) {
+        const a = hasDir && i < 3 ? dirAngle + Math.PI + (Math.random() - 0.5) * 1.5 : Math.random() * Math.PI * 2;
+        const spd = 70 + Math.random() * 140;
+        const life = 0.19 + Math.random() * 0.13;
         this.addParticle({
           x: x + (Math.random() - 0.5) * 10,
           y: y + (Math.random() - 0.5) * 10,
           vx: Math.cos(a) * spd,
           vy: Math.sin(a) * spd,
           drag: 0.89,
-          size: 4 + Math.random() * 3.5,
+          size: 4.0 + Math.random() * 3.5,
           life,
           maxLife: life,
           color: colors[i % colors.length],
-          shape: 'plank',
+          shape: i % 2 === 0 ? 'splinter' : 'plank',
           rot: Math.random() * Math.PI,
-          vRot: (Math.random() - 0.5) * 14,
+          vRot: (Math.random() - 0.5) * 15,
         });
       }
-    }
 
-    emitCrateExplosion(x, y) {
-      // Multi-stage crate shatter: shockwave + dust cloud + wood/steel bracket debris + sparks
-      this.emitShockwave(x, y, 36, 0.22, '#f59e0b', 2.4);
-      stampScorchCrater(x, y, 16);
-
-      // Dust clouds
-      for (let i = 0; i < 6; i++) {
+      // Sawdust puff + quick strapping sparks
+      for (let i = 0; i < 2; i++) {
         const a = Math.random() * Math.PI * 2;
-        const spd = 25 + Math.random() * 65;
-        const life = 0.28 + Math.random() * 0.16;
+        const spd = 20 + Math.random() * 40;
+        const life = 0.2 + Math.random() * 0.12;
         this.addParticle({
-          x: x + (Math.random() - 0.5) * 12,
-          y: y + (Math.random() - 0.5) * 12,
+          x,
+          y,
           vx: Math.cos(a) * spd,
           vy: Math.sin(a) * spd,
           drag: 0.91,
-          size: 7 + Math.random() * 7,
+          size: 4.5 + Math.random() * 3.5,
           life,
           maxLife: life,
-          color: 'rgba(168, 162, 158, 0.45)',
+          color: 'rgba(180, 150, 110, 0.38)',
           shape: 'smoke',
           rot: 0,
           vRot: 0,
         });
       }
 
-      // Olive wood slats & dark steel bracket shards
-      const debrisColors = ['#4b5332', '#656e43', '#363e22', '#374151', '#1f2937'];
-      for (let i = 0; i < 12; i++) {
+      this.emitSparks(x, y, '#fbbf24', 4, 130, 0.1, 0.18);
+    }
+
+    emitCrateDestruction(x, y, dirVx = 0, dirVy = 0) {
+      // Multi-stage crate shatter: shockwave + flash + floor splinters + dust cloud + wood/bracket debris + ember streaks
+      this.emitShockwave(x, y, 40, 0.24, '#f59e0b', 2.6);
+      stampScorchCrater(x, y, 16);
+      stampCrateSplinters(x, y);
+
+      this.addParticle({
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        drag: 1,
+        size: 16,
+        life: 0.095,
+        maxLife: 0.095,
+        color: '#fef3c7',
+        shape: 'flash',
+        rot: 0,
+        vRot: 0,
+      });
+
+      // Sawdust & blast smoke clouds
+      for (let i = 0; i < 7; i++) {
         const a = Math.random() * Math.PI * 2;
-        const spd = 70 + Math.random() * 170;
-        const life = 0.22 + Math.random() * 0.16;
+        const spd = 25 + Math.random() * 70;
+        const life = 0.28 + Math.random() * 0.18;
+        this.addParticle({
+          x: x + (Math.random() - 0.5) * 12,
+          y: y + (Math.random() - 0.5) * 12,
+          vx: Math.cos(a) * spd,
+          vy: Math.sin(a) * spd,
+          drag: 0.91,
+          size: 7 + Math.random() * 7.5,
+          life,
+          maxLife: life,
+          color: i % 2 === 0 ? 'rgba(180, 150, 110, 0.44)' : 'rgba(148, 163, 184, 0.42)',
+          shape: 'smoke',
+          rot: 0,
+          vRot: 0,
+        });
+      }
+
+      // Shattered timber slats, jagged wood splinters & dark steel corner brackets
+      const hasBias = Math.hypot(dirVx, dirVy) > 10;
+      const biasAngle = hasBias ? Math.atan2(dirVy, dirVx) : 0;
+      const debrisColors = ['#8b5a2b', '#a16207', '#656e43', '#4b5332', '#78350f', '#374151', '#1f2937'];
+      for (let i = 0; i < 16; i++) {
+        const a =
+          hasBias && i % 3 === 0
+            ? biasAngle + (Math.random() - 0.5) * 1.4
+            : Math.random() * Math.PI * 2;
+        const spd = 75 + Math.random() * 185;
+        const life = 0.24 + Math.random() * 0.18;
+        const shape = i % 5 === 0 ? 'stoneChunk' : i % 2 === 0 ? 'splinter' : 'plank';
         this.addParticle({
           x: x + (Math.random() - 0.5) * 16,
           y: y + (Math.random() - 0.5) * 16,
@@ -3178,13 +3612,37 @@
           life,
           maxLife: life,
           color: debrisColors[i % debrisColors.length],
-          shape: i % 3 === 0 ? 'triangle' : 'plank',
-          rot: Math.random() * Math.PI,
-          vRot: (Math.random() - 0.5) * 15,
+          shape,
+          rot: Math.random() * Math.PI * 2,
+          vRot: (Math.random() - 0.5) * 17,
         });
       }
 
-      this.emitSparks(x, y, '#fbbf24', 8, 160, 0.14, 0.24);
+      // High-velocity ember & iron-nail spark streaks
+      const streakColors = ['#fde047', '#fbbf24', '#fb923c', '#ffffff'];
+      for (let i = 0; i < 10; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const spd = 95 + Math.random() * 165;
+        const life = 0.14 + Math.random() * 0.12;
+        this.addParticle({
+          x,
+          y,
+          vx: Math.cos(a) * spd,
+          vy: Math.sin(a) * spd,
+          drag: 0.88,
+          size: 2.0 + Math.random() * 2.2,
+          life,
+          maxLife: life,
+          color: streakColors[i % streakColors.length],
+          shape: 'streak',
+          rot: a,
+          vRot: 0,
+        });
+      }
+    }
+
+    emitCrateExplosion(x, y, dirVx = 0, dirVy = 0) {
+      this.emitCrateDestruction(x, y, dirVx, dirVy);
     }
 
     emitTankExplosion(x, y, primaryColor, accentColor, big = false) {
@@ -3290,14 +3748,31 @@
         c.stroke();
       }
 
-      // Smoke, casings, sparks & armor shards
+      // Smoke, flashes, streaks, stone chunks, splinters, casings, sparks & armor shards
       for (let i = 0; i < this.particles.length; i++) {
         const pt = this.particles[i];
         const ratio = clamp(pt.life / pt.maxLife, 0, 1);
-        c.globalAlpha = pt.shape === 'smoke' ? ratio * 0.7 : ratio * ratio;
+        c.globalAlpha = pt.shape === 'smoke' ? ratio * 0.7 : pt.shape === 'flash' ? ratio * 0.92 : ratio * ratio;
         c.fillStyle = pt.color;
 
-        if (pt.shape === 'spark') {
+        if (pt.shape === 'flash') {
+          const r = pt.size * (0.45 + 0.55 * ratio);
+          c.beginPath();
+          c.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+          c.fill();
+        } else if (pt.shape === 'streak') {
+          const sp = Math.hypot(pt.vx, pt.vy);
+          const ux = sp > 1 ? pt.vx / sp : Math.cos(pt.rot);
+          const uy = sp > 1 ? pt.vy / sp : Math.sin(pt.rot);
+          const len = Math.max(3, Math.min(12, sp * 0.042)) * (0.45 + 0.55 * ratio);
+          c.strokeStyle = pt.color;
+          c.lineWidth = Math.max(1.1, pt.size * 0.58 * ratio);
+          c.lineCap = 'round';
+          c.beginPath();
+          c.moveTo(pt.x - ux * len, pt.y - uy * len);
+          c.lineTo(pt.x + ux * (len * 0.35), pt.y + uy * (len * 0.35));
+          c.stroke();
+        } else if (pt.shape === 'spark') {
           const s = pt.size * (0.45 + 0.55 * ratio);
           c.fillRect(pt.x - s * 0.5, pt.y - s * 0.5, s, s);
         } else if (pt.shape === 'smoke') {
@@ -3313,6 +3788,28 @@
             c.fillRect(-2.4, -1.1, 4.8, 2.2);
           } else if (pt.shape === 'plank') {
             c.fillRect(-pt.size * 0.7, -2.1, pt.size * 1.4, 4.2);
+          } else if (pt.shape === 'splinter') {
+            const w = pt.size * 0.85;
+            const h = Math.max(1.4, pt.size * 0.28);
+            c.beginPath();
+            c.moveTo(-w, 0);
+            c.lineTo(-w * 0.35, -h);
+            c.lineTo(w * 0.55, -h * 0.75);
+            c.lineTo(w, 0);
+            c.lineTo(w * 0.4, h);
+            c.lineTo(-w * 0.45, h * 0.75);
+            c.closePath();
+            c.fill();
+          } else if (pt.shape === 'stoneChunk') {
+            const r = pt.size * 0.75;
+            c.beginPath();
+            c.moveTo(-r, -r * 0.35);
+            c.lineTo(r * 0.2, -r);
+            c.lineTo(r, -r * 0.1);
+            c.lineTo(r * 0.5, r * 0.9);
+            c.lineTo(-r * 0.65, r * 0.65);
+            c.closePath();
+            c.fill();
           } else {
             c.beginPath();
             c.moveTo(0, -pt.size);
@@ -3328,7 +3825,7 @@
     }
   }
 
-  const particleSystem = new ParticleSystem(280, 28);
+  const particleSystem = new ParticleSystem(380, 36);
 
   let peerComms = null;
 
@@ -3360,18 +3857,18 @@
         if (ev.crate) {
           particleSystem.emitSparks(ev.x, ev.y, ev.col || '#fbbf24', 6, ev.final ? 130 : 150);
         } else {
-          particleSystem.emitConcreteRicochet(ev.x, ev.y, ev.nx || 0, ev.ny || 0, Boolean(ev.final));
+          particleSystem.emitStoneWallImpact(ev.x, ev.y, ev.nx || 0, ev.ny || 0, Boolean(ev.final), ev.vx || 0, ev.vy || 0);
           triggerScreenShake(ev.final ? 2.6 : 2.2, 0.09);
         }
         if (!ev.final) sfx.playBounce();
         break;
       case 'crateHit':
-        particleSystem.emitCrateHitDebris(ev.x, ev.y);
+        particleSystem.emitCrateHitDebris(ev.x, ev.y, ev.vx || 0, ev.vy || 0);
         sfx.playCrateHit();
         triggerScreenShake(3.2, 0.12);
         break;
       case 'crateBreak':
-        particleSystem.emitCrateExplosion(ev.x, ev.y);
+        particleSystem.emitCrateDestruction(ev.x, ev.y, ev.vx || 0, ev.vy || 0);
         sfx.playCrateBreak();
         triggerScreenShake(4.8, 0.18);
         if (ev.pts) addPopup(ev.x, ev.y - 12, `+${ev.pts}`, '#fbbf24', 0.7);
@@ -3380,7 +3877,34 @@
         particleSystem.emitShockwave(ev.x, ev.y, 40, 0.26, ev.color);
         particleSystem.emitSparks(ev.x, ev.y, ev.accent, 10, 165);
         addPopup(ev.x, ev.y - 14, ev.label, ev.accent, 1.15);
-        sfx.playPowerUp();
+        if (ev.ptype === 'repair') {
+          sfx.playRepair();
+          if (ev.repaired) {
+            triggerTacticalVoice('armor_restored', 'ARMOR REPLENISHED', 'Armor replenished.', { priority: 2, cooldownMs: 3000, tone: 'repair' });
+          }
+        } else if (ev.ptype === 'shield') {
+          sfx.playShieldUp();
+          triggerTacticalVoice('shield_online', 'ENERGY SHIELD ACTIVE', 'Energy shield active.', { priority: 2, cooldownMs: 4000 });
+        } else if (ev.ptype === 'recon') {
+          sfx.playReconDrone();
+          triggerTacticalVoice('recon_drone', 'RECON DRONE DEPLOYED', 'Recon drone deployed. All hostiles marked.', { priority: 2, cooldownMs: 4000 });
+        } else {
+          sfx.playPowerUp();
+        }
+        break;
+      case 'shieldBlock':
+        particleSystem.emitShockwave(ev.x, ev.y, 32, 0.18, '#22d3ee', 2.4);
+        particleSystem.emitSparks(ev.bx !== undefined ? ev.bx : ev.x, ev.by !== undefined ? ev.by : ev.y, '#67e8f9', 10, 185);
+        sfx.playShieldBlock();
+        triggerScreenShake(2.0, 0.08, ev.vx || 0, ev.vy || 0);
+        addPopup(ev.x, ev.y - 20, 'SHIELDED', '#67e8f9', 0.6);
+        break;
+      case 'voice':
+        triggerTacticalVoice(ev.key || 'net_voice', ev.label || ev.spoken || 'STATUS UPDATE', ev.spoken || ev.label || 'Status update.', {
+          priority: ev.priority || 2,
+          cooldownMs: ev.cooldownMs || 2500,
+          tone: ev.tone || 'normal',
+        });
         break;
       case 'tankHit':
         particleSystem.emitSparks(ev.x, ev.y, '#f59e0b', 12, 200);
@@ -3435,12 +3959,12 @@
     }
   }
 
-  function spawnBullet(owner, x, y, angle, speed, suppressMuzzle = false, bouncesLeft = 1) {
+  function spawnBullet(owner, x, y, angle, speed, suppressMuzzle = false, bouncesLeft = 1, piercing = false) {
     const muzzleDist = 23;
     let bx = x + Math.cos(angle) * muzzleDist;
     let by = y + Math.sin(angle) * muzzleDist;
 
-    const obstacles = getAllSolidObstacles();
+    const obstacles = getAllSolidObstacles(piercing);
     let blockedMuzzle = false;
     for (let i = 0; i < obstacles.length; i++) {
       if (circleIntersectsRect(bx, by, BULLET_RADIUS, obstacles[i])) {
@@ -3471,6 +3995,8 @@
       radius: BULLET_RADIUS,
       bouncesLeft,
       bounced: false,
+      piercing: Boolean(piercing),
+      lastPiercedCrate: null,
       age: 0,
       trail: [{ x: bx, y: by }],
     });
@@ -3526,8 +4052,26 @@
 
     state.cratesSinceLastDrop = 0;
     const keys = Object.keys(POWERUP_DEFS);
-    const pool = keys.filter((k) => k !== state.lastDropType);
-    const chosenKey = pool[Math.floor(Math.random() * pool.length)] || keys[0];
+    const standardPool = keys.filter((k) => k !== 'piercing' && k !== 'shield' && k !== 'recon' && k !== state.lastDropType);
+
+    const anyDamaged =
+      state.phase !== 'start' &&
+      ((state.player && state.player.alive && state.player.hp < MAX_HP) ||
+        (state.player2 && state.player2.alive && state.player2.hp < MAX_HP));
+
+    let chosenKey;
+    const roll = Math.random();
+    if (anyDamaged && state.lastDropType !== 'repair' && Math.random() < 0.42) {
+      chosenKey = 'repair';
+    } else if (state.lastDropType !== 'shield' && roll < 0.11) {
+      chosenKey = 'shield';
+    } else if (state.lastDropType !== 'piercing' && roll >= 0.11 && roll < 0.23) {
+      chosenKey = 'piercing';
+    } else if (state.lastDropType !== 'recon' && roll >= 0.23 && roll < 0.39) {
+      chosenKey = 'recon';
+    } else {
+      chosenKey = standardPool[Math.floor(Math.random() * standardPool.length)] || keys[0];
+    }
     state.lastDropType = chosenKey;
 
     state.powerUps.push({
@@ -3558,19 +4102,51 @@
         const hitR = p.radius + pu.radius + 3;
         if (distSq(p.x, p.y, pu.x, pu.y) <= hitR * hitR) {
           const def = POWERUP_DEFS[pu.type];
-          p.buffs[pu.type] = def.duration;
+          let popupLabel = def.label;
+          let repaired = false;
+
+          if (pu.type === 'repair') {
+            if (p.hp < MAX_HP) {
+              p.hp = Math.min(MAX_HP, p.hp + 1);
+              p.invulnTimer = Math.max(p.invulnTimer, 0.5);
+              popupLabel = 'ARMOR +1!';
+              repaired = true;
+            } else {
+              popupLabel = 'MAX ARMOR +35';
+            }
+          } else {
+            p.buffs[pu.type] = def.duration;
+          }
+
           if (state.phase !== 'start') {
             if (state.sessionMode !== 'duel') {
-              state.score += 25;
+              state.score += pu.type === 'repair' && !repaired ? 60 : 25;
             }
             updateHUD();
-            addPopup(pu.x, pu.y - 14, def.label, def.accent, 1.15);
-            sfx.playPowerUp();
+            addPopup(pu.x, pu.y - 14, popupLabel, def.accent, 1.15);
+            if (pu.type === 'repair') {
+              sfx.playRepair();
+              if (repaired) {
+                triggerTacticalVoice('armor_restored', 'ARMOR REPLENISHED', 'Armor replenished.', { priority: 2, cooldownMs: 3000, tone: 'repair' });
+              }
+            } else if (pu.type === 'shield') {
+              sfx.playShieldUp();
+              triggerTacticalVoice('shield_online', 'ENERGY SHIELD ACTIVE', 'Energy shield active.', { priority: 2, cooldownMs: 4000 });
+            } else if (pu.type === 'recon') {
+              sfx.playReconDrone();
+              triggerTacticalVoice('recon_drone', 'RECON DRONE DEPLOYED', 'Recon drone deployed. All hostiles marked.', { priority: 2, cooldownMs: 4000 });
+            } else {
+              sfx.playPowerUp();
+              if (pu.type === 'piercing') {
+                triggerTacticalVoice('piercing_rounds', 'PIERCING ROUNDS ONLINE', 'Piercing rounds loaded.', { priority: 2, cooldownMs: 4000 });
+              }
+            }
             emitNetFx('powerup', pu.x, pu.y, {
               ptype: pu.type,
-              label: def.label,
+              label: popupLabel,
               accent: def.accent,
               color: def.color,
+              repaired,
             });
           }
           particleSystem.emitShockwave(pu.x, pu.y, 40, 0.26, def.color);
@@ -3647,6 +4223,9 @@
       p.buffs.rapid = Math.max(0, p.buffs.rapid - dt);
       p.buffs.spread = Math.max(0, p.buffs.spread - dt);
       p.buffs.turbo = Math.max(0, p.buffs.turbo - dt);
+      p.buffs.piercing = Math.max(0, p.buffs.piercing - dt);
+      p.buffs.shield = Math.max(0, (p.buffs.shield || 0) - dt);
+      p.buffs.recon = Math.max(0, (p.buffs.recon || 0) - dt);
 
       const prevX = p.x;
       const prevY = p.y;
@@ -3735,13 +4314,14 @@
       if (p.fireCooldown <= 0 && activePlayerBullets < 4 && targetEnemy) {
         const hasRapid = p.buffs.rapid > 0;
         const hasSpread = p.buffs.spread > 0;
+        const hasPiercing = p.buffs.piercing > 0;
         const bulletSpeed = hasRapid ? 485 : 420;
         if (hasSpread) {
-          spawnBullet('player', p.x, p.y, p.turretAngle - 0.17, bulletSpeed, true);
-          spawnBullet('player', p.x, p.y, p.turretAngle, bulletSpeed, false);
-          spawnBullet('player', p.x, p.y, p.turretAngle + 0.17, bulletSpeed, true);
+          spawnBullet('player', p.x, p.y, p.turretAngle - 0.17, bulletSpeed, true, 1, hasPiercing);
+          spawnBullet('player', p.x, p.y, p.turretAngle, bulletSpeed, false, 1, hasPiercing);
+          spawnBullet('player', p.x, p.y, p.turretAngle + 0.17, bulletSpeed, true, 1, hasPiercing);
         } else {
-          spawnBullet('player', p.x, p.y, p.turretAngle, bulletSpeed, false);
+          spawnBullet('player', p.x, p.y, p.turretAngle, bulletSpeed, false, 1, hasPiercing);
         }
         p.fireCooldown = hasRapid ? 0.35 : 0.75 + Math.random() * 0.35;
         p.recoil = hasSpread ? 7.0 : 5.6;
@@ -3776,6 +4356,9 @@
     p.buffs.rapid = Math.max(0, p.buffs.rapid - dt);
     p.buffs.spread = Math.max(0, p.buffs.spread - dt);
     p.buffs.turbo = Math.max(0, p.buffs.turbo - dt);
+    p.buffs.piercing = Math.max(0, p.buffs.piercing - dt);
+    p.buffs.shield = Math.max(0, (p.buffs.shield || 0) - dt);
+    p.buffs.recon = Math.max(0, (p.buffs.recon || 0) - dt);
 
     const activeSpeed = p.buffs.turbo > 0 ? p.speed * 1.4 : p.speed;
     const prevX = p.x;
@@ -3794,7 +4377,7 @@
       }
     } else {
       const mag = Math.hypot(input.moveX, input.moveY);
-      if (mag > 0.12) {
+      if (mag > 0.04) {
         const nx = input.moveX / Math.max(1, mag);
         const ny = input.moveY / Math.max(1, mag);
         const targetAngle = Math.atan2(ny, nx);
@@ -3863,6 +4446,7 @@
 
     const hasRapid = p.buffs.rapid > 0;
     const hasSpread = p.buffs.spread > 0;
+    const hasPiercing = p.buffs.piercing > 0;
     const fireInterval = hasRapid ? 0.115 : 0.28;
     const bulletSpeed = hasRapid ? 500 : 435;
     const maxPlayerBullets = hasRapid || hasSpread ? 12 : 5;
@@ -3873,11 +4457,11 @@
       if (Number.isFinite(input.fireAngle)) p.turretAngle = input.fireAngle;
       if (hasSpread) {
         const spreadOffset = 0.17;
-        spawnBullet(bulletOwner, p.x, p.y, p.turretAngle - spreadOffset, bulletSpeed, true);
-        spawnBullet(bulletOwner, p.x, p.y, p.turretAngle, bulletSpeed, false);
-        spawnBullet(bulletOwner, p.x, p.y, p.turretAngle + spreadOffset, bulletSpeed, true);
+        spawnBullet(bulletOwner, p.x, p.y, p.turretAngle - spreadOffset, bulletSpeed, true, 1, hasPiercing);
+        spawnBullet(bulletOwner, p.x, p.y, p.turretAngle, bulletSpeed, false, 1, hasPiercing);
+        spawnBullet(bulletOwner, p.x, p.y, p.turretAngle + spreadOffset, bulletSpeed, true, 1, hasPiercing);
       } else {
-        spawnBullet(bulletOwner, p.x, p.y, p.turretAngle, bulletSpeed, false);
+        spawnBullet(bulletOwner, p.x, p.y, p.turretAngle, bulletSpeed, false, 1, hasPiercing);
       }
       p.fireCooldown = fireInterval;
       p.lastFireInterval = fireInterval;
@@ -3889,7 +4473,7 @@
   }
 
   function stickToTreadAxes(stickX, stickY) {
-    const dz = 0.16;
+    const dz = 0.06;
     const rawTurn = clamp(stickX, -1, 1);
     const rawThrust = clamp(-stickY, -1, 1);
     const turn = Math.abs(rawTurn) > dz ? (rawTurn - Math.sign(rawTurn) * dz) / (1 - dz) : 0;
@@ -3912,7 +4496,7 @@
       if (state.keys['KeyA'] || (allowArrowsForP1 && state.keys['ArrowLeft'])) inX -= 1;
       if (state.keys['KeyD'] || (allowArrowsForP1 && state.keys['ArrowRight'])) inX += 1;
 
-      const touchDriving = Math.hypot(state.touch.moveX, state.touch.moveY) > 0.08;
+      const touchDriving = Math.hypot(state.touch.moveX, state.touch.moveY) > 0.03;
       const touchTread = stickToTreadAxes(state.touch.moveX, state.touch.moveY);
       const keyTurn =
         (state.keys['KeyD'] || (allowArrowsForP1 && state.keys['ArrowRight']) ? 1 : 0) -
@@ -3925,15 +4509,16 @@
 
       let aimDirectAngle = null;
       let aimSnapAngle = null;
-      if (state.touch.aimActive && state.touch.aimArmed) {
-        aimDirectAngle = state.touch.aimAngle;
-        state.touch.hasCustomAim = true;
-      } else if (state.mouse.active || state.touch.canvasAimDown) {
+      if (state.touch.canvasAimDown || state.mouse.active) {
         aimSnapAngle = Math.atan2(state.mouse.y - p1.y, state.mouse.x - p1.x);
+        state.touch.hasCustomAim = true;
+      } else if (state.touch.aimActive && state.touch.aimArmed) {
+        aimDirectAngle = state.touch.aimAngle;
         state.touch.hasCustomAim = true;
       }
 
       state.touch.fireReleaseQueued = Math.max(0, state.touch.fireReleaseQueued - dt);
+      const liveArenaAim = state.touch.canvasAimDown || state.mouse.down;
       const wantsFire =
         state.mouse.down ||
         state.keys['Space'] ||
@@ -3953,7 +4538,7 @@
           aimSnapAngle,
           keepCustomAim: state.touch.hasCustomAim,
           wantsFire,
-          fireAngle: state.touch.fireReleaseQueued > 0 ? state.touch.fireAngle : null,
+          fireAngle: !liveArenaAim && state.touch.fireReleaseQueued > 0 ? state.touch.fireAngle : null,
           onFired: () => {
             state.touch.fireReleaseQueued = 0;
           },
@@ -3998,7 +4583,7 @@
         if (state.keys['ArrowLeft']) inX -= 1;
         if (state.keys['ArrowRight']) inX += 1;
 
-        const touchDriving = Math.hypot(state.p2Touch.moveX, state.p2Touch.moveY) > 0.08;
+        const touchDriving = Math.hypot(state.p2Touch.moveX, state.p2Touch.moveY) > 0.03;
         const p2Tread = stickToTreadAxes(state.p2Touch.moveX, state.p2Touch.moveY);
         const keyTurn = (state.keys['ArrowRight'] ? 1 : 0) - (state.keys['ArrowLeft'] ? 1 : 0);
         const keyThrust = (state.keys['ArrowUp'] ? 1 : 0) - (state.keys['ArrowDown'] ? 1 : 0);
@@ -4201,10 +4786,11 @@
       }
 
       // Vanguard Boss: deploy mines & deployable barriers periodically
+      const diff = getActiveDifficultyProfile();
       if (e.type === 'boss_vanguard') {
         e.deployCooldown -= dt;
         if (e.deployCooldown <= 0) {
-          e.deployCooldown = 4.2 + Math.random() * 1.4;
+          e.deployCooldown = (4.2 + Math.random() * 1.4) * diff.fireIntervalMult;
           deployVanguardUtility(e);
         }
       }
@@ -4234,7 +4820,7 @@
           : Math.PI;
         const readyToShoot = e.fireCooldown <= 0 && (canSeePlayer ? angleToPlayer < 0.25 : true);
         if (readyToShoot) {
-          if (e.aimCharge < 0.18) {
+          if (e.aimCharge < 0.18 * diff.aimChargeMult) {
             e.aimCharge += dt;
           } else {
             spawnBullet('enemy', e.x, e.y, e.turretAngle, e.bulletSpeed, false, e.bounces);
@@ -4265,7 +4851,7 @@
           const aimErr = Math.abs(normalizeAngle(targetAngle - e.turretAngle));
           if (e.fireCooldown <= 0 && aimErr < 0.12) {
             e.aimCharge += dt;
-            if (e.aimCharge >= 0.36) {
+            if (e.aimCharge >= 0.36 * diff.aimChargeMult) {
               spawnBullet('enemy', e.x, e.y, e.turretAngle, e.bulletSpeed, false, 2);
               e.fireCooldown = e.fireInterval;
               e.aimCharge = 0;
@@ -4287,13 +4873,13 @@
 
           if (e.fireCooldown <= 0 && aimErr < 0.24) {
             e.aimCharge += dt;
-            if (e.aimCharge >= 0.24) {
+            if (e.aimCharge >= 0.24 * diff.aimChargeMult) {
               if (e.twin) {
                 spawnBullet('enemy', e.x, e.y, e.turretAngle - 0.08, e.bulletSpeed, false, e.bounces);
                 spawnBullet('enemy', e.x, e.y, e.turretAngle + 0.08, e.bulletSpeed, true, e.bounces);
                 if (e.type === 'boss_juggernaut') {
                   e.burstRemaining = 1;
-                  e.burstTimer = 0.22;
+                  e.burstTimer = 0.22 * diff.fireIntervalMult;
                 }
               } else {
                 spawnBullet('enemy', e.x, e.y, e.turretAngle, e.bulletSpeed, false, e.bounces);
@@ -4313,7 +4899,26 @@
     }
   }
 
+  function handleShieldDeflect(tank, b) {
+    const bx = b && b.x !== undefined ? b.x : tank.x;
+    const by = b && b.y !== undefined ? b.y : tank.y;
+    const vx = b && b.vx !== undefined ? b.vx : 0;
+    const vy = b && b.vy !== undefined ? b.vy : 0;
+    particleSystem.emitShockwave(tank.x, tank.y, tank.radius + 16, 0.18, '#22d3ee', 2.4);
+    particleSystem.emitSparks(bx, by, '#67e8f9', 10, 185);
+    triggerScreenShake(2.0, 0.08, vx, vy);
+    sfx.playShieldBlock();
+    if (state.phase !== 'start') {
+      addPopup(tank.x, tank.y - 20, 'SHIELDED', '#67e8f9', 0.6);
+      emitNetFx('shieldBlock', tank.x, tank.y, { bx: r1(bx), by: r1(by), vx: r1(vx), vy: r1(vy) });
+    }
+  }
+
   function applyDamageToPlayerTank(tank, whoLabel, b) {
+    if (tank.buffs && tank.buffs.shield > 0) {
+      handleShieldDeflect(tank, b);
+      return;
+    }
     if (tank.invulnTimer <= 0) {
       tank.hp = Math.max(0, tank.hp - 1);
       tank.invulnTimer = 1.35;
@@ -4364,6 +4969,13 @@
         if (state.phase !== 'start') {
           addPopup(tank.x, tank.y - 18, '-1 ARMOR', '#f87171', 0.85);
           emitNetFx('tankHit', tank.x, tank.y, { vx: r1(b.vx), vy: r1(b.vy), target: whoLabel });
+          if (tank.hp === 1 && state.sessionMode !== 'duel') {
+            if (state.netMode !== 'p2p-host' || whoLabel === 'player') {
+              triggerTacticalVoice('armor_critical', 'ARMOR CRITICAL // SEEK COVER', 'Armor critical. Seek cover.', { priority: 3, cooldownMs: 8000, tone: 'alert' });
+            } else if (whoLabel === 'p2') {
+              emitNetFx('voice', tank.x, tank.y, { key: 'armor_critical', label: 'ARMOR CRITICAL // SEEK COVER', spoken: 'Armor critical. Seek cover.', priority: 3, cooldownMs: 8000, tone: 'alert' });
+            }
+          }
         }
       }
     } else {
@@ -4387,7 +4999,8 @@
         b.x += b.vx * stepDt;
         b.y += b.vy * stepDt;
 
-        const obstacles = getAllSolidObstacles();
+        const isPiercing = Boolean(b.piercing);
+        const obstacles = getAllSolidObstacles(isPiercing);
         let hitObstacle = null;
         let hitCrate = null;
         let hitBarrier = null;
@@ -4418,6 +5031,23 @@
           }
         }
 
+        if (isPiercing && !hitObstacle && !hitDeflectorNormal) {
+          let activeCrate = null;
+          for (let j = 0; j < state.crates.length; j++) {
+            const cr = state.crates[j];
+            if (cr.hp > 0 && circleIntersectsRect(b.x, b.y, b.radius, cr)) {
+              activeCrate = cr;
+              break;
+            }
+          }
+          if (activeCrate && b.lastPiercedCrate !== activeCrate) {
+            b.lastPiercedCrate = activeCrate;
+            particleSystem.emitSparks(b.x, b.y, '#e879f9', 3, 75);
+          } else if (!activeCrate) {
+            b.lastPiercedCrate = null;
+          }
+        }
+
         if (hitDeflectorNormal) {
           const nx = hitDeflectorNormal.nx;
           const ny = hitDeflectorNormal.ny;
@@ -4431,14 +5061,14 @@
             }
             b.x = prevX + nx * 1.4;
             b.y = prevY + ny * 1.4;
-            particleSystem.emitConcreteRicochet(b.x, b.y, nx, ny, false);
+            particleSystem.emitStoneWallImpact(b.x, b.y, nx, ny, false, b.vx, b.vy);
             triggerScreenShake(2.4, 0.09, -b.vx, -b.vy);
-            emitNetFx('bounce', b.x, b.y, { nx: r1(nx), ny: r1(ny), crate: false, final: false });
+            emitNetFx('bounce', b.x, b.y, { nx: r1(nx), ny: r1(ny), vx: r1(b.vx), vy: r1(b.vy), crate: false, final: false });
             sfx.playBounce();
           } else {
-            particleSystem.emitConcreteRicochet(prevX, prevY, nx, ny, true);
+            particleSystem.emitStoneWallImpact(prevX, prevY, nx, ny, true, b.vx, b.vy);
             triggerScreenShake(2.6, 0.1, b.vx, b.vy);
-            emitNetFx('bounce', prevX, prevY, { nx: r1(nx), ny: r1(ny), crate: false, final: true });
+            emitNetFx('bounce', prevX, prevY, { nx: r1(nx), ny: r1(ny), vx: r1(b.vx), vy: r1(b.vy), crate: false, final: true });
             state.bullets.splice(i, 1);
             removed = true;
             break;
@@ -4450,7 +5080,7 @@
             if (hitCrate.hp <= 0) {
               const cx = hitCrate.x + TILE / 2;
               const cy = hitCrate.y + TILE / 2;
-              particleSystem.emitCrateExplosion(cx, cy);
+              particleSystem.emitCrateDestruction(cx, cy, b.vx, b.vy);
               sfx.playCrateBreak();
               triggerScreenShake(4.8, 0.18, b.vx, b.vy);
               maybeSpawnPowerUp(cx, cy);
@@ -4461,12 +5091,12 @@
                 addPopup(cx, hitCrate.y + 8, '+15', '#fbbf24', 0.7);
                 updateHUD();
               }
-              emitNetFx('crateBreak', cx, cy, { pts });
+              emitNetFx('crateBreak', cx, cy, { pts, vx: r1(b.vx), vy: r1(b.vy) });
             } else {
-              particleSystem.emitCrateHitDebris(b.x, b.y);
+              particleSystem.emitCrateHitDebris(b.x, b.y, b.vx, b.vy);
               sfx.playCrateHit();
               triggerScreenShake(3.2, 0.12, b.vx, b.vy);
-              emitNetFx('crateHit', b.x, b.y);
+              emitNetFx('crateHit', b.x, b.y, { vx: r1(b.vx), vy: r1(b.vy) });
             }
           } else if (hitBarrier) {
             hitBarrier.hp -= 1;
@@ -4474,7 +5104,7 @@
             if (hitBarrier.hp <= 0) {
               const cx = hitBarrier.x + hitBarrier.w * 0.5;
               const cy = hitBarrier.y + hitBarrier.h * 0.5;
-              particleSystem.emitCrateExplosion(cx, cy);
+              particleSystem.emitCrateDestruction(cx, cy, b.vx, b.vy);
               sfx.playCrateBreak();
               emitNetFx('barrierBreak', cx, cy);
             } else {
@@ -4513,9 +5143,11 @@
               particleSystem.emitSparks(b.x, b.y, '#fbbf24', 6, 150);
               emitNetFx('bounce', b.x, b.y, { crate: true, col: '#fbbf24', final: false });
             } else {
-              particleSystem.emitConcreteRicochet(b.x, b.y, normX, normY, false);
+              const wallX = normX !== 0 ? (normX > 0 ? hitObstacle.x + hitObstacle.w : hitObstacle.x) : clamp(b.x, hitObstacle.x, hitObstacle.x + hitObstacle.w);
+              const wallY = normY !== 0 ? (normY > 0 ? hitObstacle.y + hitObstacle.h : hitObstacle.y) : clamp(b.y, hitObstacle.y, hitObstacle.y + hitObstacle.h);
+              particleSystem.emitStoneWallImpact(wallX, wallY, normX, normY, false, b.vx, b.vy);
               triggerScreenShake(2.2, 0.09, -b.vx, -b.vy);
-              emitNetFx('bounce', b.x, b.y, { nx: normX, ny: normY, crate: false, final: false });
+              emitNetFx('bounce', wallX, wallY, { nx: normX, ny: normY, vx: r1(b.vx), vy: r1(b.vy), crate: false, final: false });
             }
             sfx.playBounce();
           } else {
@@ -4524,9 +5156,11 @@
               particleSystem.emitSparks(b.x, b.y, col, 6, 130);
               emitNetFx('bounce', b.x, b.y, { crate: true, col, final: true });
             } else {
-              particleSystem.emitConcreteRicochet(prevX, prevY, normX, normY, true);
+              const wallX = normX !== 0 ? (normX > 0 ? hitObstacle.x + hitObstacle.w : hitObstacle.x) : clamp(prevX, hitObstacle.x, hitObstacle.x + hitObstacle.w);
+              const wallY = normY !== 0 ? (normY > 0 ? hitObstacle.y + hitObstacle.h : hitObstacle.y) : clamp(prevY, hitObstacle.y, hitObstacle.y + hitObstacle.h);
+              particleSystem.emitStoneWallImpact(wallX, wallY, normX, normY, true, b.vx, b.vy);
               triggerScreenShake(2.6, 0.1, b.vx, b.vy);
-              emitNetFx('bounce', prevX, prevY, { nx: normX, ny: normY, crate: false, final: true });
+              emitNetFx('bounce', wallX, wallY, { nx: normX, ny: normY, vx: r1(b.vx), vy: r1(b.vy), crate: false, final: true });
             }
             state.bullets.splice(i, 1);
             removed = true;
@@ -4591,6 +5225,28 @@
                   txt = e.isBoss ? `BOSS DOWN! +${totalPts}` : bonus > 0 ? `+${totalPts} BANK!` : `+${totalPts}`;
                   tCol = e.isBoss ? '#fbbf24' : bonus > 0 ? '#fde047' : '#e5e7eb';
                   addPopup(e.x, e.y - 14, txt, tCol, e.isBoss ? 1.5 : 0.95);
+
+                  state.recentKillCount = state.recentKillTimer > 0 ? state.recentKillCount + 1 : 1;
+                  state.recentKillTimer = 4.5;
+                  const remainingAlive = state.enemies.some((en) => en.alive);
+
+                  if (e.isBoss) {
+                    const vMsg = { key: 'boss_down', label: 'COMMAND TANK NEUTRALIZED', spoken: 'Command tank neutralized.', priority: 3, cooldownMs: 2500 };
+                    triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
+                    emitNetFx('voice', e.x, e.y, vMsg);
+                  } else if (state.recentKillCount >= 3 && remainingAlive) {
+                    const vMsg = { key: 'squad_eliminated', label: 'HOSTILE SQUAD ELIMINATED', spoken: 'Hostile squad eliminated.', priority: 2, cooldownMs: 7500 };
+                    triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
+                    emitNetFx('voice', e.x, e.y, vMsg);
+                  } else if (state.recentKillCount === 2 && remainingAlive) {
+                    const vMsg = { key: 'multi_kill', label: 'MULTIPLE HOSTILES NEUTRALIZED', spoken: 'Multiple hostiles neutralized.', priority: 2, cooldownMs: 6500 };
+                    triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
+                    emitNetFx('voice', e.x, e.y, vMsg);
+                  } else if (b.bounced && remainingAlive) {
+                    const vMsg = { key: 'bank_kill', label: 'RICOCHET KILL CONFIRMED', spoken: 'Ricochet kill confirmed.', priority: 1, cooldownMs: 14000 };
+                    triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
+                    emitNetFx('voice', e.x, e.y, vMsg);
+                  }
                 }
 
                 particleSystem.emitTankExplosion(e.x, e.y, '#ef4444', '#f97316', Boolean(e.isBoss));
@@ -4609,7 +5265,8 @@
         if (!removed && state.sessionMode === 'duel') {
           if (b.owner === 'player' && state.player2 && state.player2.alive) {
             const p2 = state.player2;
-            const hitR = b.radius + p2.radius;
+            const shieldPad = p2.buffs && p2.buffs.shield > 0 ? 7 : 0;
+            const hitR = b.radius + p2.radius + shieldPad;
             if (distSq(b.x, b.y, p2.x, p2.y) <= hitR * hitR) {
               state.bullets.splice(i, 1);
               removed = true;
@@ -4618,7 +5275,8 @@
             }
           } else if (b.owner === 'p2' && state.player && state.player.alive) {
             const p1 = state.player;
-            const hitR = b.radius + p1.radius;
+            const shieldPad = p1.buffs && p1.buffs.shield > 0 ? 7 : 0;
+            const hitR = b.radius + p1.radius + shieldPad;
             if (distSq(b.x, b.y, p1.x, p1.y) <= hitR * hitR) {
               state.bullets.splice(i, 1);
               removed = true;
@@ -4637,7 +5295,8 @@
           for (let ti = 0; ti < targets.length; ti++) {
             const target = targets[ti];
             if (!target.tank || !target.tank.alive) continue;
-            const hitR = b.radius + target.tank.radius;
+            const shieldPad = target.tank.buffs && target.tank.buffs.shield > 0 ? 7 : 0;
+            const hitR = b.radius + target.tank.radius + shieldPad;
             if (distSq(b.x, b.y, target.tank.x, target.tank.y) <= hitR * hitR) {
               state.bullets.splice(i, 1);
               removed = true;
@@ -4757,6 +5416,22 @@
 
     state.shakeTime = Math.max(0, state.shakeTime - dt);
     state.damageFlash = Math.max(0, state.damageFlash - dt);
+
+    if (voiceCooldownTimer > 0) {
+      voiceCooldownTimer = Math.max(0, voiceCooldownTimer - dt);
+    }
+    if (voiceFeedTimer > 0) {
+      voiceFeedTimer = Math.max(0, voiceFeedTimer - dt);
+      if (voiceFeedTimer <= 0) {
+        hideTacticalVoiceBanner();
+      }
+    }
+    if (state.recentKillTimer > 0) {
+      state.recentKillTimer = Math.max(0, state.recentKillTimer - dt);
+      if (state.recentKillTimer <= 0) {
+        state.recentKillCount = 0;
+      }
+    }
   }
 
   function checkWaveProgress(dt) {
@@ -4792,6 +5467,9 @@
         const txt = `SECTOR ${secStr} SECURED! +${clearBonus}`;
         addPopup(ARENA_W / 2, ARENA_H * 0.42, txt, '#84cc16', 1.7);
         emitNetFx('popup', ARENA_W / 2, ARENA_H * 0.42, { txt, col: '#84cc16', dur: 1.7 });
+        const secVoice = { key: 'sector_secured', label: `SECTOR ${secStr} SECURED`, spoken: 'Sector secured.', priority: 3, cooldownMs: 2000 };
+        triggerTacticalVoice(secVoice.key, secVoice.label, secVoice.spoken, secVoice);
+        emitNetFx('voice', ARENA_W / 2, ARENA_H * 0.42, secVoice);
       }
     } else if (state.phase === 'wave_transition') {
       state.transitionTimer -= dt;
@@ -4882,6 +5560,7 @@
     if (screenSettings) screenSettings.classList.add('hidden');
     if (radarHud) radarHud.classList.add('hidden');
     sfx.playGameOver();
+    triggerTacticalVoice('unit_lost', 'UNIT LOST // FALL BACK', 'Unit lost. Fall back.', { priority: 3, cooldownMs: 2000, tone: 'alert' });
     if (gameoverC2Code) gameoverC2Code.textContent = 'ALERT // HULL BREACH';
     if (gameoverC2Status) gameoverC2Status.textContent = 'KIA';
     if (gameoverTitle) {
@@ -5782,9 +6461,11 @@
         });
       }
 
-      if (p.buffs.rapid > 0 || p.buffs.spread > 0 || p.buffs.turbo > 0) {
+      if (p.buffs.rapid > 0 || p.buffs.spread > 0 || p.buffs.turbo > 0 || p.buffs.piercing > 0) {
         const ringColor =
-          p.buffs.spread > 0
+          p.buffs.piercing > 0
+            ? 'rgba(192, 132, 252, 0.65)'
+            : p.buffs.spread > 0
             ? 'rgba(245, 158, 11, 0.58)'
             : p.buffs.rapid > 0
             ? 'rgba(14, 165, 233, 0.58)'
@@ -5796,6 +6477,84 @@
         ctx.arc(p.x, p.y, p.radius + 5, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
+      }
+
+      if (p.buffs.shield > 0) {
+        const nowSec = performance.now() * 0.001;
+        const expiringBlink = p.buffs.shield < 2.2 && Math.floor(p.buffs.shield * 12) % 2 === 0;
+        if (!expiringBlink) {
+          const shieldR = p.radius + 10 + Math.sin(nowSec * 6.5) * 0.9;
+          ctx.save();
+          ctx.fillStyle = 'rgba(34, 211, 238, 0.14)';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, shieldR, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(103, 232, 249, 0.88)';
+          ctx.lineWidth = 2.1;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, shieldR, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = 'rgba(207, 250, 254, 0.72)';
+          ctx.lineWidth = 1.6;
+          for (let seg = 0; seg < 3; seg++) {
+            const a0 = nowSec * 2.4 + (seg * Math.PI * 2) / 3;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, shieldR + 2.5, a0, a0 + 0.72);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+      }
+
+      if (p.buffs.recon > 0) {
+        const nowSec = performance.now() * 0.001;
+        const orbitAng = nowSec * 2.5 + (isP2 ? Math.PI : 0);
+        const droneX = p.x + Math.cos(orbitAng) * (p.radius + 13);
+        const droneY = p.y + Math.sin(orbitAng) * (p.radius + 13);
+        ctx.save();
+        // Faint UAV telemetry tether ring
+        ctx.strokeStyle = 'rgba(250, 204, 21, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius + 13, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Quad-rotor tactical recon drone silhouette
+        ctx.translate(droneX, droneY);
+        ctx.rotate(orbitAng + Math.PI * 0.5);
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(-4, -4);
+        ctx.lineTo(4, 4);
+        ctx.moveTo(4, -4);
+        ctx.lineTo(-4, 4);
+        ctx.stroke();
+
+        ctx.fillStyle = 'rgba(250, 204, 21, 0.35)';
+        [[-4, -4], [4, -4], [4, 4], [-4, 4]].forEach(([rx, ry]) => {
+          ctx.beginPath();
+          ctx.arc(rx, ry, 2.2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = '#facc15';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        ctx.arc(0, 0, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#fef9c3';
+        ctx.beginPath();
+        ctx.arc(0, 0, 1.0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       }
 
       if (p.invulnTimer > 0) {
@@ -5881,6 +6640,86 @@
           ctx.arc(Math.cos(ang) * 7, Math.sin(ang) * 7 + 1, 1.8, 0, Math.PI * 2);
           ctx.fill();
         }
+      } else if (pu.type === 'repair') {
+        // Armored shield outline + medical/repair cross inside
+        ctx.strokeStyle = def.accent;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(-6, -6);
+        ctx.lineTo(6, -6);
+        ctx.lineTo(6, 1);
+        ctx.lineTo(0, 7);
+        ctx.lineTo(-6, 1);
+        ctx.closePath();
+        ctx.stroke();
+
+        ctx.fillStyle = def.accent;
+        ctx.fillRect(-1.3, -4, 2.6, 8);
+        ctx.fillRect(-4, -1.3, 8, 2.6);
+      } else if (pu.type === 'piercing') {
+        // Dashed wooden crate outline with a sharp penetrator arrow passing straight through
+        ctx.strokeStyle = 'rgba(217, 119, 6, 0.72)';
+        ctx.lineWidth = 1.3;
+        ctx.setLineDash([2.2, 2]);
+        ctx.strokeRect(-4, -5, 8, 10);
+        ctx.setLineDash([]);
+
+        ctx.strokeStyle = def.accent;
+        ctx.fillStyle = def.accent;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-8, 0);
+        ctx.lineTo(5, 0);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(8, 0);
+        ctx.lineTo(3, -3.6);
+        ctx.lineTo(3, 3.6);
+        ctx.closePath();
+        ctx.fill();
+      } else if (pu.type === 'shield') {
+        // Ballistic energy shield emblem with inner core chevron
+        ctx.strokeStyle = def.accent;
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.25)';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(0, -7);
+        ctx.lineTo(6.2, -4.4);
+        ctx.lineTo(5.6, 1.8);
+        ctx.lineTo(0, 7.2);
+        ctx.lineTo(-5.6, 1.8);
+        ctx.lineTo(-6.2, -4.4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.strokeStyle = def.accent;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, -0.5, 2.3, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (pu.type === 'recon') {
+        // Quad-rotor Tactical Recon Drone + radar wave icon
+        ctx.strokeStyle = def.accent;
+        ctx.lineWidth = 1.7;
+        ctx.beginPath();
+        ctx.moveTo(-4.8, -4.8);
+        ctx.lineTo(4.8, 4.8);
+        ctx.moveTo(4.8, -4.8);
+        ctx.lineTo(-4.8, 4.8);
+        ctx.stroke();
+
+        [[-5, -5], [5, -5], [5, 5], [-5, 5]].forEach(([rx, ry]) => {
+          ctx.beginPath();
+          ctx.arc(rx, ry, 2.1, 0, Math.PI * 2);
+          ctx.stroke();
+        });
+
+        ctx.fillStyle = def.color;
+        ctx.beginPath();
+        ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
+        ctx.fill();
       } else {
         ctx.beginPath();
         ctx.moveTo(-6, 3);
@@ -5901,7 +6740,7 @@
     if (!p || !p.alive || state.phase !== 'playing') return;
 
     const active = [];
-    ['rapid', 'spread', 'turbo'].forEach((key) => {
+    ['shield', 'recon', 'rapid', 'spread', 'turbo', 'piercing'].forEach((key) => {
       if (p.buffs[key] > 0) {
         active.push({ def: POWERUP_DEFS[key], remaining: p.buffs[key] });
       }
@@ -5952,18 +6791,25 @@
     const dy = Math.sin(aimAngle);
     const muzzleX = p.x + dx * 27;
     const muzzleY = p.y + dy * 27;
+    const isPiercing = p.buffs.piercing > 0;
 
-    const primary = raycastObstacles(muzzleX, muzzleY, dx, dy, 960);
+    const primary = raycastObstacles(muzzleX, muzzleY, dx, dy, 960, isPiercing);
 
     ctx.save();
     const isStickCancelled = touchState && touchState.aimActive && !touchState.aimArmed;
     const isStickArmed = touchState && touchState.aimActive && touchState.aimArmed;
-    const beamAlpha = isStickCancelled ? 0.16 : isStickArmed ? 0.72 : 0.42;
-    const bounceAlpha = isStickCancelled ? 0.08 : isStickArmed ? 0.52 : 0.28;
+    const beamAlpha = isStickCancelled ? 0.16 : isStickArmed ? 0.72 : isPiercing ? 0.56 : 0.42;
+    const bounceAlpha = isStickCancelled ? 0.08 : isStickArmed ? 0.52 : isPiercing ? 0.38 : 0.28;
 
-    const baseRgb = isCrimson ? '239, 68, 68' : p.buffs.spread > 0 || isStickArmed ? '245, 158, 11' : '132, 204, 22';
+    const baseRgb = isCrimson
+      ? '239, 68, 68'
+      : isPiercing
+      ? '192, 132, 252'
+      : p.buffs.spread > 0 || isStickArmed
+      ? '245, 158, 11'
+      : '132, 204, 22';
     ctx.strokeStyle = `rgba(${baseRgb}, ${beamAlpha})`;
-    ctx.lineWidth = isStickArmed ? 1.7 : 1.3;
+    ctx.lineWidth = isStickArmed || isPiercing ? 1.7 : 1.3;
     ctx.setLineDash(isStickCancelled ? [3, 6] : [7, 5]);
     ctx.beginPath();
     ctx.moveTo(muzzleX, muzzleY);
@@ -5972,7 +6818,13 @@
 
     if (primary.hit) {
       ctx.setLineDash([]);
-      ctx.fillStyle = isCrimson ? '#f87171' : isStickArmed || p.buffs.spread > 0 ? '#fbbf24' : '#a3e635';
+      ctx.fillStyle = isCrimson
+        ? '#f87171'
+        : isPiercing
+        ? '#e879f9'
+        : isStickArmed || p.buffs.spread > 0
+        ? '#fbbf24'
+        : '#a3e635';
       ctx.beginPath();
       ctx.arc(primary.x, primary.y, isStickArmed ? 3.4 : 2.8, 0, Math.PI * 2);
       ctx.fill();
@@ -5980,7 +6832,7 @@
       const dot = dx * primary.nx + dy * primary.ny;
       const rx = dx - 2 * dot * primary.nx;
       const ry = dy - 2 * dot * primary.ny;
-      const bounceRay = raycastObstacles(primary.x + primary.nx * 0.6, primary.y + primary.ny * 0.6, rx, ry, 260);
+      const bounceRay = raycastObstacles(primary.x + primary.nx * 0.6, primary.y + primary.ny * 0.6, rx, ry, 260, isPiercing);
 
       ctx.strokeStyle = `rgba(${baseRgb}, ${bounceAlpha})`;
       ctx.lineWidth = isStickArmed ? 1.4 : 1.1;
@@ -5992,13 +6844,13 @@
     }
 
     if (p.buffs.spread > 0) {
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.22)';
+      ctx.strokeStyle = isPiercing ? 'rgba(192, 132, 252, 0.28)' : 'rgba(245, 158, 11, 0.22)';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 6]);
       [-0.17, 0.17].forEach((offset) => {
         const sx = Math.cos(aimAngle + offset);
         const sy = Math.sin(aimAngle + offset);
-        const sideHit = raycastObstacles(p.x + sx * 24, p.y + sy * 24, sx, sy, 190);
+        const sideHit = raycastObstacles(p.x + sx * 24, p.y + sy * 24, sx, sy, 190, isPiercing);
         ctx.beginPath();
         ctx.moveTo(p.x + sx * 24, p.y + sy * 24);
         ctx.lineTo(sideHit.x, sideHit.y);
@@ -6094,9 +6946,10 @@
       const p2 = state.player2;
       if (p2 && p2.alive) {
         let localAim = p2.turretAngle;
-        if (state.touch.aimActive && state.touch.aimArmed) localAim = state.touch.aimAngle;
-        else if (state.mouse.active || state.touch.canvasAimDown) {
+        if (state.touch.canvasAimDown || state.mouse.active) {
           localAim = Math.atan2(state.mouse.y - p2.y, state.mouse.x - p2.x);
+        } else if (state.touch.aimActive && state.touch.aimArmed) {
+          localAim = state.touch.aimAngle;
         }
         renderTankLaserSight(p2, localAim, state.touch, state.sessionMode === 'duel');
       }
@@ -6120,7 +6973,11 @@
       const my = state.mouse.y;
       ctx.save();
       ctx.strokeStyle =
-        activeLocalTank.buffs.spread > 0 ? 'rgba(251, 191, 36, 0.85)' : 'rgba(163, 230, 53, 0.85)';
+        activeLocalTank.buffs.piercing > 0
+          ? 'rgba(192, 132, 252, 0.9)'
+          : activeLocalTank.buffs.spread > 0
+          ? 'rgba(251, 191, 36, 0.85)'
+          : 'rgba(163, 230, 53, 0.85)';
       ctx.lineWidth = 1.3;
       ctx.beginPath();
       ctx.arc(mx, my, 8, 0, Math.PI * 2);
@@ -6141,8 +6998,13 @@
     for (let i = 0; i < state.bullets.length; i++) {
       const b = state.bullets[i];
       const isFriendly = b.owner === 'player' || (b.owner === 'p2' && state.sessionMode === 'coop');
-      const tracerColor = b.bounced ? '#fde047' : isFriendly ? '#f59e0b' : '#ef4444';
-      const glowColor = b.bounced
+      const isPiercing = Boolean(b.piercing);
+      const tracerColor = isPiercing
+        ? b.bounced ? '#f0abfc' : '#c084fc'
+        : b.bounced ? '#fde047' : isFriendly ? '#f59e0b' : '#ef4444';
+      const glowColor = isPiercing
+        ? 'rgba(192, 132, 252, 0.45)'
+        : b.bounced
         ? 'rgba(253, 224, 71, 0.42)'
         : isFriendly
         ? 'rgba(245, 158, 11, 0.38)'
@@ -6150,7 +7012,7 @@
 
       if (b.trail.length > 1) {
         ctx.strokeStyle = glowColor;
-        ctx.lineWidth = 3.2;
+        ctx.lineWidth = isPiercing ? 3.8 : 3.2;
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(b.trail[0].x, b.trail[0].y);
@@ -6158,6 +7020,20 @@
           ctx.lineTo(b.trail[t].x, b.trail[t].y);
         }
         ctx.stroke();
+      }
+
+      if (isPiercing) {
+        const sp = Math.hypot(b.vx, b.vy) || 1;
+        const ux = b.vx / sp;
+        const uy = b.vy / sp;
+        ctx.save();
+        ctx.strokeStyle = '#f5d0fe';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(b.x - ux * 7, b.y - uy * 7);
+        ctx.lineTo(b.x + ux * 6, b.y + uy * 6);
+        ctx.stroke();
+        ctx.restore();
       }
 
       ctx.fillStyle = glowColor;
@@ -6170,7 +7046,7 @@
       ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = '#fffbeb';
+      ctx.fillStyle = isPiercing ? '#fdf4ff' : '#fffbeb';
       ctx.beginPath();
       ctx.arc(b.x, b.y, b.radius * 0.52, 0, Math.PI * 2);
       ctx.fill();
@@ -6285,6 +7161,29 @@
       return;
     }
 
+    const localTank = state.netMode === 'p2p-client' ? state.player2 : state.player;
+    const reconRemaining =
+      state.sessionMode === 'coop'
+        ? Math.max(state.player ? state.player.buffs.recon || 0 : 0, state.player2 ? state.player2.buffs.recon || 0 : 0)
+        : localTank
+        ? localTank.buffs.recon || 0
+        : 0;
+    const reconActive = reconRemaining > 0;
+
+    if (radarHud) {
+      radarHud.classList.toggle('recon-active', reconActive);
+    }
+    if (radarLabel) {
+      const nextRadarTxt = reconActive
+        ? `RECON ${Math.ceil(reconRemaining)}S`
+        : state.isBossSector
+        ? 'BOSS ALERT'
+        : 'RADAR';
+      if (radarLabel.textContent !== nextRadarTxt) {
+        radarLabel.textContent = nextRadarTxt;
+      }
+    }
+
     const rSize = radarHud ? radarHud.clientWidth || 86 : 86;
     const dpr = state.dpr || 1;
     if (radarCanvas.width !== Math.round(rSize * dpr)) {
@@ -6306,10 +7205,18 @@
     rc.clip();
 
     const bossAlert = state.isBossSector;
-    rc.fillStyle = bossAlert ? 'rgba(24, 10, 12, 0.94)' : 'rgba(11, 16, 15, 0.92)';
+    rc.fillStyle = reconActive
+      ? 'rgba(18, 22, 14, 0.94)'
+      : bossAlert
+      ? 'rgba(24, 10, 12, 0.94)'
+      : 'rgba(11, 16, 15, 0.92)';
     rc.fillRect(0, 0, rSize, rSize);
 
-    rc.strokeStyle = bossAlert ? 'rgba(239, 68, 68, 0.22)' : 'rgba(132, 204, 22, 0.16)';
+    rc.strokeStyle = reconActive
+      ? 'rgba(250, 204, 21, 0.28)'
+      : bossAlert
+      ? 'rgba(239, 68, 68, 0.22)'
+      : 'rgba(132, 204, 22, 0.16)';
     rc.lineWidth = 0.8;
     [outerR * 0.36, outerR * 0.7, outerR * 0.98].forEach((r) => {
       rc.beginPath();
@@ -6324,20 +7231,38 @@
     rc.lineTo(cx, cy + outerR);
     rc.stroke();
 
-    const sweepAngle = (now * 0.0022) % (Math.PI * 2);
-    rc.fillStyle = bossAlert ? 'rgba(239, 68, 68, 0.14)' : 'rgba(132, 204, 22, 0.12)';
+    const sweepSpeed = reconActive ? 0.0042 : 0.0022;
+    const sweepAngle = (now * sweepSpeed) % (Math.PI * 2);
+    rc.fillStyle = reconActive
+      ? 'rgba(250, 204, 21, 0.18)'
+      : bossAlert
+      ? 'rgba(239, 68, 68, 0.14)'
+      : 'rgba(132, 204, 22, 0.12)';
     rc.beginPath();
     rc.moveTo(cx, cy);
     rc.arc(cx, cy, outerR, sweepAngle - 0.52, sweepAngle);
     rc.closePath();
     rc.fill();
 
-    rc.strokeStyle = bossAlert ? 'rgba(248, 113, 113, 0.55)' : 'rgba(163, 230, 53, 0.45)';
+    rc.strokeStyle = reconActive
+      ? 'rgba(254, 240, 138, 0.68)'
+      : bossAlert
+      ? 'rgba(248, 113, 113, 0.55)'
+      : 'rgba(163, 230, 53, 0.45)';
     rc.lineWidth = 1;
     rc.beginPath();
     rc.moveTo(cx, cy);
     rc.lineTo(cx + Math.cos(sweepAngle) * outerR, cy + Math.sin(sweepAngle) * outerR);
     rc.stroke();
+
+    if (reconActive) {
+      const scanWave = ((now * 0.0012) % 1) * outerR;
+      rc.strokeStyle = `rgba(250, 204, 21, ${(1 - scanWave / outerR) * 0.55})`;
+      rc.lineWidth = 1.1;
+      rc.beginPath();
+      rc.arc(cx, cy, scanWave, 0, Math.PI * 2);
+      rc.stroke();
+    }
 
     const arenaDiag = Math.hypot(ARENA_W, ARENA_H);
     const scale = (outerR * 1.84) / arenaDiag;
@@ -6346,7 +7271,11 @@
     const offX = cx - mapW * 0.5;
     const offY = cy - mapH * 0.5 - 2;
 
-    rc.strokeStyle = bossAlert ? 'rgba(239, 68, 68, 0.35)' : 'rgba(132, 204, 22, 0.28)';
+    rc.strokeStyle = reconActive
+      ? 'rgba(250, 204, 21, 0.42)'
+      : bossAlert
+      ? 'rgba(239, 68, 68, 0.35)'
+      : 'rgba(132, 204, 22, 0.28)';
     rc.lineWidth = 0.9;
     rc.strokeRect(offX, offY, mapW, mapH);
 
@@ -6371,12 +7300,56 @@
       rc.fillRect(mx - 1.6, my - 1.6, 3.2, 3.2);
     }
 
+    const RADAR_SENSOR_RANGE = 185;
+    const RADAR_SENSOR_RANGE_SQ = RADAR_SENSOR_RANGE * RADAR_SENSOR_RANGE;
+    const sensorOriginTanks =
+      state.sessionMode === 'duel' && state.netMode !== 'local-split'
+        ? [localTank]
+        : [state.player, state.player2];
+
+    const isPositionDetectedOnRadar = (tx, ty) => {
+      if (reconActive) return true;
+      for (let si = 0; si < sensorOriginTanks.length; si++) {
+        const ft = sensorOriginTanks[si];
+        if (!ft || !ft.alive) continue;
+        if (distSq(ft.x, ft.y, tx, ty) <= RADAR_SENSOR_RANGE_SQ) return true;
+        if (hasLineOfSight(ft.x, ft.y, tx, ty)) return true;
+      }
+      return false;
+    };
+
+    if (!reconActive) {
+      rc.save();
+      rc.strokeStyle = 'rgba(132, 204, 22, 0.24)';
+      rc.lineWidth = 0.8;
+      rc.setLineDash([2.5, 2.5]);
+      for (let si = 0; si < sensorOriginTanks.length; si++) {
+        const ft = sensorOriginTanks[si];
+        if (!ft || !ft.alive) continue;
+        rc.beginPath();
+        rc.arc(offX + ft.x * scale, offY + ft.y * scale, RADAR_SENSOR_RANGE * scale, 0, Math.PI * 2);
+        rc.stroke();
+      }
+      rc.setLineDash([]);
+      rc.restore();
+    }
+
     const pingPulse = 0.5 + 0.5 * Math.sin(now * 0.008);
     for (let i = 0; i < state.enemies.length; i++) {
       const e = state.enemies[i];
       if (!e.alive) continue;
+      if (!isPositionDetectedOnRadar(e.x, e.y)) continue;
+
       const ex = offX + e.x * scale;
       const ey = offY + e.y * scale;
+
+      if (reconActive) {
+        // High-visibility UAV target acquisition diamond/reticle
+        rc.strokeStyle = `rgba(250, 204, 21, ${0.55 + pingPulse * 0.4})`;
+        rc.lineWidth = 0.9;
+        const br = e.isBoss ? 5.2 : 3.8;
+        rc.strokeRect(ex - br, ey - br, br * 2, br * 2);
+      }
 
       if (e.isBoss) {
         rc.strokeStyle = `rgba(251, 191, 36, ${0.4 + pingPulse * 0.45})`;
@@ -6443,12 +7416,26 @@
       rc.restore();
     };
 
-    drawRadarTankChevron(state.player, '#84cc16', '#ecfccb');
-    drawRadarTankChevron(
-      state.player2,
-      state.sessionMode === 'duel' ? '#ef4444' : '#f59e0b',
-      state.sessionMode === 'duel' ? '#fecaca' : '#fef3c7'
-    );
+    const showP1OnRadar =
+      state.sessionMode !== 'duel' ||
+      state.netMode !== 'p2p-client' ||
+      isPositionDetectedOnRadar(state.player ? state.player.x : 0, state.player ? state.player.y : 0);
+    const showP2OnRadar =
+      state.sessionMode !== 'duel' ||
+      state.netMode === 'p2p-client' ||
+      state.netMode === 'local-split' ||
+      isPositionDetectedOnRadar(state.player2 ? state.player2.x : 0, state.player2 ? state.player2.y : 0);
+
+    if (showP1OnRadar) {
+      drawRadarTankChevron(state.player, '#84cc16', '#ecfccb');
+    }
+    if (showP2OnRadar) {
+      drawRadarTankChevron(
+        state.player2,
+        state.sessionMode === 'duel' ? '#ef4444' : '#f59e0b',
+        state.sessionMode === 'duel' ? '#fecaca' : '#fef3c7'
+      );
+    }
 
     rc.restore();
   }
@@ -6471,6 +7458,9 @@
       r1(t.buffs.rapid),
       r1(t.buffs.spread),
       r1(t.buffs.turbo),
+      r1(t.buffs.piercing || 0),
+      r1(t.buffs.shield || 0),
+      r1(t.buffs.recon || 0),
     ];
   }
 
@@ -6505,6 +7495,9 @@
     t.buffs.rapid = pkt[9];
     t.buffs.spread = pkt[10];
     t.buffs.turbo = pkt[11];
+    t.buffs.piercing = pkt[12] || 0;
+    t.buffs.shield = pkt[13] || 0;
+    t.buffs.recon = pkt[14] || 0;
   }
 
   function buildStateSnapshot() {
@@ -6532,7 +7525,7 @@
         e.hp,
         e.sniperLockAngle !== null ? r3(e.sniperLockAngle) : null,
       ]),
-      bu: state.bullets.map((b) => [b.id, b.owner, r1(b.x), r1(b.y), r1(b.vx), r1(b.vy), b.bounced ? 1 : 0]),
+      bu: state.bullets.map((b) => [b.id, b.owner, r1(b.x), r1(b.y), r1(b.vx), r1(b.vy), b.bounced ? 1 : 0, b.piercing ? 1 : 0]),
       cr: state.crates.map((c) => c.hp),
       pu: state.powerUps.map((pu) => [pu.type, r1(pu.x), r1(pu.y), r1(pu.life)]),
       mn: state.mines.map((m) => [r1(m.x), r1(m.y), r1(m.armTimer)]),
@@ -6556,13 +7549,13 @@
 
     let aimOn = false;
     let aimA = state.player2 ? state.player2.turretAngle : 0;
-    if (state.touch.aimActive && state.touch.aimArmed) {
-      aimOn = true;
-      aimA = state.touch.aimAngle;
-      state.touch.hasCustomAim = true;
-    } else if ((state.mouse.active || state.touch.canvasAimDown) && state.player2) {
+    if ((state.touch.canvasAimDown || state.mouse.active) && state.player2) {
       aimOn = true;
       aimA = Math.atan2(state.mouse.y - state.player2.y, state.mouse.x - state.player2.x);
+      state.touch.hasCustomAim = true;
+    } else if (state.touch.aimActive && state.touch.aimArmed) {
+      aimOn = true;
+      aimA = state.touch.aimAngle;
       state.touch.hasCustomAim = true;
     } else if (state.touch.hasCustomAim) {
       aimOn = true;
@@ -6649,6 +7642,7 @@
           vy: arr[5],
           radius: BULLET_RADIUS,
           bounced: Boolean(arr[6]),
+          piercing: Boolean(arr[7]),
           trail,
         };
       });
@@ -6707,7 +7701,6 @@
 
     const dt = Math.min((now - lastTime) / 1000, 0.05);
     lastTime = now;
-    promoteHeldAimStick(state.touch, aimStickBase, aimStickKnob);
     promoteHeldAimStick(state.p2Touch, p2AimStickBase, p2AimStickKnob);
 
     if (!state.settingsOpen && !state.paused) {
@@ -6814,18 +7807,97 @@
   });
 
   window.addEventListener('blur', () => {
-    state.keys = Object.create(null);
-    state.mouse.down = false;
-    state.touch.canvasAimDown = false;
-    state.touch.canvasTouchId = null;
-    resetDriveStick();
-    resetAimStick(false);
-    resetP2DriveStick();
-    resetP2AimStick(false);
+    clearActiveInputs();
   });
 
+  function isElementVisible(el) {
+    return Boolean(el && !el.classList.contains('hidden'));
+  }
+
+  function isClientPointInsideRect(el, clientX, clientY) {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    return (
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom
+    );
+  }
+
+  function isUiOverlayBlocking() {
+    if (state.settingsOpen || state.paused) return true;
+    if (state.phase !== 'playing' && state.phase !== 'wave_transition') return true;
+    return (
+      isElementVisible(screenStart) ||
+      isElementVisible(screenComms) ||
+      isElementVisible(screenIntel) ||
+      isElementVisible(screenSettings) ||
+      isElementVisible(screenPause) ||
+      isElementVisible(screenGameOver) ||
+      isElementVisible(screenVictory)
+    );
+  }
+
+  function isPointOverUiLayer(clientX, clientY, target) {
+    if (target && target !== canvas) return true;
+
+    if (typeof document.elementFromPoint === 'function') {
+      const hitEl = document.elementFromPoint(clientX, clientY);
+      if (
+        hitEl &&
+        hitEl !== canvas &&
+        hitEl.closest(
+          '#hud-bar, .hud-actions, .hud-stats, .radar-hud, .touch-zone, .overlay, .home-overlay, button, input, textarea'
+        )
+      ) {
+        return true;
+      }
+    }
+
+    if (!appShell || !appShell.classList.contains('is-home')) {
+      if (isClientPointInsideRect(hudBar, clientX, clientY) && (
+        isClientPointInsideRect(hudStats, clientX, clientY) ||
+        isClientPointInsideRect(hudActions, clientX, clientY)
+      )) {
+        return true;
+      }
+      if (isElementVisible(radarHud) && isClientPointInsideRect(radarHud, clientX, clientY)) {
+        return true;
+      }
+    }
+
+    if (touchDeck && touchDeck.classList.contains('visible') && isClientPointInsideRect(touchZoneLeft, clientX, clientY)) {
+      return true;
+    }
+    if (touchDeckP2 && touchDeckP2.classList.contains('visible')) {
+      if (
+        isClientPointInsideRect(touchZoneP2Left, clientX, clientY) ||
+        isClientPointInsideRect(touchZoneP2Right, clientX, clientY)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function startDriveTouch(t) {
+    state.touch.driveTouchId = t.identifier;
+    positionFloatingStick(touchZoneLeft, driveStickBase, t.clientX, t.clientY);
+    state.touch.driveOriginX = t.clientX;
+    state.touch.driveOriginY = t.clientY;
+    updateDriveStickFromClient(t.clientX, t.clientY);
+  }
+
   canvas.addEventListener('mousemove', (e) => {
-    if (state.phase === 'start' || performance.now() - state.touch.lastTouchTime < 500) return;
+    if (
+      isUiOverlayBlocking() ||
+      performance.now() - state.touch.lastTouchTime < 500 ||
+      isPointOverUiLayer(e.clientX, e.clientY, e.target)
+    ) {
+      return;
+    }
     const pos = clientToArena(e.clientX, e.clientY);
     state.mouse.x = pos.x;
     state.mouse.y = pos.y;
@@ -6833,38 +7905,74 @@
   });
 
   canvas.addEventListener('mousedown', (e) => {
-    if (state.phase === 'start' || e.button !== 0 || performance.now() - state.touch.lastTouchTime < 500) return;
+    if (
+      isUiOverlayBlocking() ||
+      e.button !== 0 ||
+      performance.now() - state.touch.lastTouchTime < 500 ||
+      isPointOverUiLayer(e.clientX, e.clientY, e.target)
+    ) {
+      return;
+    }
     sfx.ensureContext();
     const pos = clientToArena(e.clientX, e.clientY);
     state.mouse.x = pos.x;
     state.mouse.y = pos.y;
     state.mouse.active = true;
     state.mouse.down = true;
+    if (state.phase === 'playing') {
+      const localTank = state.netMode === 'p2p-client' ? state.player2 : state.player;
+      if (localTank && localTank.alive) {
+        const tapAngle = Math.atan2(pos.y - localTank.y, pos.x - localTank.x);
+        state.touch.aimAngle = tapAngle;
+        state.touch.hasCustomAim = true;
+      }
+    }
   });
 
   window.addEventListener('mouseup', () => {
     state.mouse.down = false;
   });
 
-  // Upper-arena tap/drag fallback (ignores touches captured by bottom twin-stick zones)
+  // Prioritize direct arena tap-to-shoot while excluding all UI layers (HUD, radar, drive pad, modals)
   canvas.addEventListener(
     'touchstart',
     (e) => {
-      e.preventDefault();
       state.touch.lastTouchTime = performance.now();
+      if (isUiOverlayBlocking()) return;
+      e.preventDefault();
       sfx.ensureContext();
       if (!state.touch.enabled) {
         state.touch.enabled = true;
         syncTouchDeckVisibility();
       }
-      if (state.touch.canvasTouchId === null && e.changedTouches.length > 0) {
-        const t = e.changedTouches[0];
-        state.touch.canvasTouchId = t.identifier;
-        const pos = clientToArena(t.clientX, t.clientY);
-        state.mouse.x = pos.x;
-        state.mouse.y = pos.y;
-        state.mouse.active = true;
-        state.touch.canvasAimDown = true;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        if (isPointOverUiLayer(t.clientX, t.clientY, e.target)) {
+          continue;
+        }
+        if (state.touch.canvasTouchId === null) {
+          state.touch.canvasTouchId = t.identifier;
+          const pos = clientToArena(t.clientX, t.clientY);
+          state.mouse.x = pos.x;
+          state.mouse.y = pos.y;
+          state.mouse.active = true;
+          state.touch.canvasAimDown = true;
+          if (state.phase === 'playing') {
+            const localTank = state.netMode === 'p2p-client' ? state.player2 : state.player;
+            if (localTank && localTank.alive) {
+              const tapAngle = Math.atan2(pos.y - localTank.y, pos.x - localTank.x);
+              state.touch.aimAngle = tapAngle;
+              state.touch.hasCustomAim = true;
+              if (state.netMode === 'p2p-client' && peerComms && peerComms.connected) {
+                peerComms.sendEvent({ t: 'fire', rev: state.arenaRevision, a: r3(tapAngle) });
+              } else {
+                state.touch.fireReleaseQueued = 0.14;
+                state.touch.fireAngle = tapAngle;
+              }
+            }
+          }
+          break;
+        }
       }
     },
     { passive: false }
@@ -6873,14 +7981,29 @@
   canvas.addEventListener(
     'touchmove',
     (e) => {
-      e.preventDefault();
       if (state.touch.canvasTouchId === null) return;
+      e.preventDefault();
+      if (isUiOverlayBlocking()) {
+        state.touch.canvasTouchId = null;
+        state.touch.canvasAimDown = false;
+        return;
+      }
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
         if (t.identifier === state.touch.canvasTouchId) {
           const pos = clientToArena(t.clientX, t.clientY);
           state.mouse.x = pos.x;
           state.mouse.y = pos.y;
+          state.mouse.active = true;
+          const localTank = state.netMode === 'p2p-client' ? state.player2 : state.player;
+          if (localTank && localTank.alive) {
+            const moveAngle = Math.atan2(pos.y - localTank.y, pos.x - localTank.x);
+            state.touch.aimAngle = moveAngle;
+            state.touch.hasCustomAim = true;
+            if (state.touch.fireReleaseQueued > 0) {
+              state.touch.fireAngle = moveAngle;
+            }
+          }
           break;
         }
       }
@@ -6889,10 +8012,11 @@
   );
 
   const endCanvasTouch = (e) => {
-    e.preventDefault();
     if (state.touch.canvasTouchId === null) return;
+    e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {
-      if (e.changedTouches[i].identifier === state.touch.canvasTouchId) {
+      const t = e.changedTouches[i];
+      if (t.identifier === state.touch.canvasTouchId) {
         state.touch.canvasTouchId = null;
         state.touch.canvasAimDown = false;
         break;
@@ -6903,33 +8027,16 @@
   canvas.addEventListener('touchcancel', endCanvasTouch, { passive: false });
 
   // =========================================================================
-  // Multi-Touch Twin-Stick Aim-and-Release System
+  // Multi-Touch Drive & P2 Split Aim Helpers
   // =========================================================================
   const AIM_DEADZONE = 0.24;
-  // Right-stick releases inside both limits are Quick-Fire taps; longer holds or drags become precision aim.
+  // P2 aim-stick releases inside both limits are Quick-Fire taps; longer holds or drags become precision aim.
   const QUICK_FIRE_MAX_MS = 180;
   const QUICK_FIRE_MAX_TRAVEL = 12;
   const QUICK_FIRE_ASSIST_CONE = (15 * Math.PI) / 180;
   const RELOAD_CIRCUMFERENCE = 289.03;
-  let lastReloadOffset = -1;
-  let lastReloadActive = false;
 
   function updateReloadRingUI() {
-    if (!aimReloadRing) return;
-    const p = state.netMode === 'p2p-client' ? state.player2 : state.player;
-    const cooling = p && p.alive && p.fireCooldown > 0;
-    const frac = cooling ? clamp(1 - p.fireCooldown / Math.max(0.05, p.lastFireInterval), 0, 1) : 1;
-    const offset = Math.round((1 - frac) * RELOAD_CIRCUMFERENCE * 10) / 10;
-
-    if (offset !== lastReloadOffset) {
-      lastReloadOffset = offset;
-      aimReloadRing.style.strokeDashoffset = String(offset);
-    }
-    if (cooling !== lastReloadActive) {
-      lastReloadActive = cooling;
-      aimStickBase.classList.toggle('reloading', cooling);
-    }
-
     if (p2AimReloadRing && p2AimStickBase && state.netMode === 'local-split') {
       const p2 = state.player2;
       const c2 = p2 && p2.alive && p2.fireCooldown > 0;
@@ -6942,7 +8049,7 @@
 
   function positionFloatingStick(zoneEl, stickEl, clientX, clientY) {
     const zoneRect = zoneEl.getBoundingClientRect();
-    const stickSize = stickEl.offsetWidth || 96;
+    const stickSize = stickEl.offsetWidth || 102;
     const half = stickSize * 0.5;
     const cx = clamp(clientX - zoneRect.left, half + 4, Math.max(half + 4, zoneRect.width - half - 4));
     const cy = clamp(clientY - zoneRect.top, half + 4, Math.max(half + 4, zoneRect.height - half - 4));
@@ -6958,20 +8065,35 @@
     };
   }
 
-  function updateDriveStickFromClient(clientX, clientY) {
-    const stickSize = driveStickBase.offsetWidth || 96;
-    const maxR = stickSize * 0.36;
-    let dx = clientX - state.touch.driveOriginX;
-    let dy = clientY - state.touch.driveOriginY;
+  function computeSensitiveStickAxes(dx, dy, stickSize) {
+    const visualMaxR = stickSize * 0.36;
+    const effectiveMaxR = Math.max(10, stickSize * 0.18);
     const dist = Math.hypot(dx, dy);
-    if (dist > maxR) {
-      dx = (dx / dist) * maxR;
-      dy = (dy / dist) * maxR;
+    if (dist < 0.001) {
+      return { visX: 0, visY: 0, moveX: 0, moveY: 0 };
     }
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const visDist = Math.min(dist, visualMaxR);
+    const norm = Math.min(1, dist / effectiveMaxR);
+    const curved = Math.pow(norm, 0.72);
+    return {
+      visX: nx * visDist,
+      visY: ny * visDist,
+      moveX: nx * curved,
+      moveY: ny * curved,
+    };
+  }
 
-    driveStickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-    state.touch.moveX = dx / maxR;
-    state.touch.moveY = dy / maxR;
+  function updateDriveStickFromClient(clientX, clientY) {
+    const stickSize = driveStickBase.offsetWidth || 102;
+    const dx = clientX - state.touch.driveOriginX;
+    const dy = clientY - state.touch.driveOriginY;
+    const axes = computeSensitiveStickAxes(dx, dy, stickSize);
+
+    driveStickKnob.style.transform = `translate(${axes.visX}px, ${axes.visY}px)`;
+    state.touch.moveX = axes.moveX;
+    state.touch.moveY = axes.moveY;
     driveStickBase.classList.add('engaged');
   }
 
@@ -7092,38 +8214,16 @@
     base.classList.add('quick-fire');
   }
 
-  function resetAimStick(fireOnRelease = false) {
-    const localTank = state.netMode === 'p2p-client' ? state.player2 : state.player;
-    const shot = fireOnRelease ? resolveAimRelease(state.touch, aimStickBase, aimStickKnob, localTank) : null;
-    state.touch.aimTouchId = null;
-    state.touch.aimMouseActive = false;
-    clearAimStick(state.touch, aimStickBase, aimStickKnob);
-    if (!shot) return;
-
-    if (shot.quick) flashQuickFire(aimStickBase);
-    if (state.netMode === 'p2p-client' && peerComms && peerComms.connected) {
-      peerComms.sendEvent({ t: 'fire', rev: state.arenaRevision, a: r3(shot.angle) });
-    } else {
-      state.touch.fireReleaseQueued = 0.14;
-      state.touch.fireAngle = shot.angle;
-    }
-  }
-
   // Player 2 Top Twin-Stick Helpers (Local Split Same-Device Mode)
   function updateP2DriveStick(clientX, clientY) {
     if (!p2DriveStickBase || !p2DriveStickKnob) return;
-    const stickSize = p2DriveStickBase.offsetWidth || 96;
-    const maxR = stickSize * 0.36;
-    let dx = clientX - state.p2Touch.driveOriginX;
-    let dy = clientY - state.p2Touch.driveOriginY;
-    const dist = Math.hypot(dx, dy);
-    if (dist > maxR) {
-      dx = (dx / dist) * maxR;
-      dy = (dy / dist) * maxR;
-    }
-    p2DriveStickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-    state.p2Touch.moveX = dx / maxR;
-    state.p2Touch.moveY = dy / maxR;
+    const stickSize = p2DriveStickBase.offsetWidth || 102;
+    const dx = clientX - state.p2Touch.driveOriginX;
+    const dy = clientY - state.p2Touch.driveOriginY;
+    const axes = computeSensitiveStickAxes(dx, dy, stickSize);
+    p2DriveStickKnob.style.transform = `translate(${axes.visX}px, ${axes.visY}px)`;
+    state.p2Touch.moveX = axes.moveX;
+    state.p2Touch.moveY = axes.moveY;
     p2DriveStickBase.classList.add('engaged');
   }
 
@@ -7154,14 +8254,13 @@
     state.p2Touch.fireAngle = shot.angle;
   }
 
-  for (const base of [aimStickBase, p2AimStickBase]) {
-    if (!base) continue;
+  if (p2AimStickBase) {
     // Clear the flash class even when hiding the deck cancels it, so a later reveal cannot replay it.
     const endFlash = (e) => {
-      if (e.target === base) base.classList.remove('quick-fire');
+      if (e.target === p2AimStickBase) p2AimStickBase.classList.remove('quick-fire');
     };
-    base.addEventListener('animationend', endFlash);
-    base.addEventListener('animationcancel', endFlash);
+    p2AimStickBase.addEventListener('animationend', endFlash);
+    p2AimStickBase.addEventListener('animationcancel', endFlash);
   }
 
   if (touchZoneP2Left && p2DriveStickBase) {
@@ -7286,18 +8385,15 @@
   touchZoneLeft.addEventListener(
     'touchstart',
     (e) => {
+      state.touch.lastTouchTime = performance.now();
+      if (isUiOverlayBlocking()) return;
       e.preventDefault();
       e.stopPropagation();
-      state.touch.lastTouchTime = performance.now();
       sfx.ensureContext();
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
         if (state.touch.driveTouchId === null) {
-          state.touch.driveTouchId = t.identifier;
-          const origin = positionFloatingStick(touchZoneLeft, driveStickBase, t.clientX, t.clientY);
-          state.touch.driveOriginX = origin.originX;
-          state.touch.driveOriginY = origin.originY;
-          updateDriveStickFromClient(t.clientX, t.clientY);
+          startDriveTouch(t);
           break;
         }
       }
@@ -7336,110 +8432,24 @@
   touchZoneLeft.addEventListener('touchend', endDriveTouch, { passive: false });
   touchZoneLeft.addEventListener('touchcancel', endDriveTouch, { passive: false });
 
-  // Right Zone: Floating Aim-and-Release Stick (Multi-Touch tracked by identifier)
-  touchZoneRight.addEventListener(
-    'touchstart',
-    (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      state.touch.lastTouchTime = performance.now();
-      sfx.ensureContext();
-      state.mouse.active = false;
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const t = e.changedTouches[i];
-        if (state.touch.aimTouchId === null) {
-          state.touch.aimTouchId = t.identifier;
-          beginAimGesture(state.touch, touchZoneRight, aimStickBase, aimStickKnob, t.clientX, t.clientY);
-          break;
-        }
-      }
-    },
-    { passive: false }
-  );
-
-  touchZoneRight.addEventListener(
-    'touchmove',
-    (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (state.touch.aimTouchId === null) return;
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const t = e.changedTouches[i];
-        if (t.identifier === state.touch.aimTouchId) {
-          trackAimStick(state.touch, aimStickBase, aimStickKnob, t.clientX, t.clientY);
-          break;
-        }
-      }
-    },
-    { passive: false }
-  );
-
-  touchZoneRight.addEventListener(
-    'touchend',
-    (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (state.touch.aimTouchId === null) return;
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const t = e.changedTouches[i];
-        if (t.identifier === state.touch.aimTouchId) {
-          trackAimStick(state.touch, aimStickBase, aimStickKnob, t.clientX, t.clientY);
-          resetAimStick(true);
-          break;
-        }
-      }
-    },
-    { passive: false }
-  );
-
-  touchZoneRight.addEventListener(
-    'touchcancel',
-    (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (state.touch.aimTouchId === null) return;
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].identifier === state.touch.aimTouchId) {
-          resetAimStick(false);
-          break;
-        }
-      }
-    },
-    { passive: false }
-  );
-
-  // Mouse fallback for testing virtual sticks when PAD is toggled on desktop
+  // Mouse fallback for testing virtual Drive stick when PAD is toggled
   touchZoneLeft.addEventListener('mousedown', (e) => {
     if (e.button !== 0 || performance.now() - state.touch.lastTouchTime < 600) return;
     e.preventDefault();
     sfx.ensureContext();
     state.touch.driveMouseActive = true;
-    const origin = positionFloatingStick(touchZoneLeft, driveStickBase, e.clientX, e.clientY);
-    state.touch.driveOriginX = origin.originX;
-    state.touch.driveOriginY = origin.originY;
+    positionFloatingStick(touchZoneLeft, driveStickBase, e.clientX, e.clientY);
+    state.touch.driveOriginX = e.clientX;
+    state.touch.driveOriginY = e.clientY;
     updateDriveStickFromClient(e.clientX, e.clientY);
-  });
-
-  touchZoneRight.addEventListener('mousedown', (e) => {
-    if (e.button !== 0 || performance.now() - state.touch.lastTouchTime < 600) return;
-    e.preventDefault();
-    sfx.ensureContext();
-    state.mouse.active = false;
-    state.touch.aimMouseActive = true;
-    beginAimGesture(state.touch, touchZoneRight, aimStickBase, aimStickKnob, e.clientX, e.clientY);
   });
 
   window.addEventListener('mousemove', (e) => {
     if (state.touch.driveMouseActive) updateDriveStickFromClient(e.clientX, e.clientY);
-    if (state.touch.aimMouseActive) trackAimStick(state.touch, aimStickBase, aimStickKnob, e.clientX, e.clientY);
   });
 
-  window.addEventListener('mouseup', (e) => {
+  window.addEventListener('mouseup', () => {
     if (state.touch.driveMouseActive) resetDriveStick();
-    if (state.touch.aimMouseActive) {
-      trackAimStick(state.touch, aimStickBase, aimStickKnob, e.clientX, e.clientY);
-      resetAimStick(true);
-    }
   });
 
   // =========================================================================
@@ -7834,6 +8844,9 @@
   if (btnSettings) {
     btnSettings.addEventListener('click', openSettingsModal);
   }
+  if (btnHomeSettings) {
+    btnHomeSettings.addEventListener('click', openSettingsModal);
+  }
   if (btnSettingsX) {
     btnSettingsX.addEventListener('click', closeSettingsModal);
   }
@@ -7885,6 +8898,27 @@
       applySettings();
     });
   }
+  if (btnToggleVoice) {
+    btnToggleVoice.addEventListener('click', () => {
+      userSettings.voiceEnabled = !userSettings.voiceEnabled;
+      saveSettings();
+      applySettings();
+    });
+  }
+  [
+    ['easy', diffEasyBtn],
+    ['normal', diffNormalBtn],
+    ['veteran', diffVeteranBtn],
+  ].forEach(([diffId, btn]) => {
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      if (userSettings.difficulty === diffId) return;
+      userSettings.difficulty = diffId;
+      saveSettings();
+      applySettings();
+      applyDifficultyToActiveEnemies();
+    });
+  });
   if (sliderUiOpacity) {
     const onOpacityChange = () => {
       userSettings.uiOpacity = clamp(Math.round(Number(sliderUiOpacity.value) || 100), 25, 100);

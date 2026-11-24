@@ -77,6 +77,13 @@
         <div class="boss-banner-sub" id="boss-banner-sub">JUGGERNAUT HEAVY // TWIN-CANNON</div>
       </div>
 
+      <!-- Muted Tactical Radio Voiceover Callout Banner -->
+      <div class="tac-comms-feed hidden" id="tac-comms-feed" role="status" aria-live="polite">
+        <span class="tac-comms-led" aria-hidden="true"></span>
+        <span class="tac-comms-tag">COMMS</span>
+        <span class="tac-comms-text" id="tac-comms-text">SECTOR SECURED</span>
+      </div>
+
       <!-- Minimalist Tactical Title / Home Overlay -->
       <section class="home-overlay" id="screen-start" aria-label="Ricochet Tanks Home Screen">
         <div class="home-grid-fx" aria-hidden="true"></div>
@@ -139,7 +146,12 @@
             <span class="deploy-text">DEPLOY</span>
           </button>
 
-          <button type="button" class="intel-btn" id="btn-intel">HOW TO PLAY / INTEL</button>
+          <div class="home-secondary-row">
+            <button type="button" class="intel-btn" id="btn-intel">HOW TO PLAY</button>
+            <button type="button" class="intel-btn" id="btn-home-settings">
+              SETTINGS <span class="home-diff-tag" id="home-settings-diff">NORMAL</span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -263,13 +275,13 @@
             </div>
             <div class="legend-item">
               <span class="swatch swatch-crate"></span>
-              <span><strong>Supply Crate</strong> (Buffs)</span>
+              <span><strong>Supply Crate</strong> (Buffs / Armor)</span>
             </div>
           </div>
 
           <div class="controls-box">
             <div class="intel-section-row">
-              <strong>TWIN-STICK TOUCH:</strong> Drag <strong>Left Stick</strong> to drive &bull; <strong>Tap Right Stick</strong> to quick-fire along your turret &bull; <strong>Hold or drag</strong> it to aim your ricochet laser, release to fire (pull back to center to cancel).
+              <strong>MOBILE CONTROLS:</strong> Drag the <strong>Left Drive Stick</strong> anywhere in the bottom-left zone to maneuver &bull; <strong>Tap or drag anywhere on the map</strong> to aim your ricochet laser and fire.
             </div>
             <div class="intel-section-divider" aria-hidden="true"></div>
             <div class="intel-section-row">
@@ -329,6 +341,34 @@
                   </span>
                   <span class="tac-switch-state" id="sfx-state-label">ON</span>
                 </button>
+              </div>
+
+              <div class="setting-row">
+                <div class="setting-meta">
+                  <span class="setting-name">TACTICAL VOICEOVER</span>
+                  <span class="setting-desc">Muted C2 radio status updates</span>
+                </div>
+                <button type="button" class="tac-switch on" id="btn-toggle-voice" role="switch" aria-checked="true" aria-label="Toggle Tactical Voiceover">
+                  <span class="tac-switch-track">
+                    <span class="tac-switch-thumb"></span>
+                  </span>
+                  <span class="tac-switch-state" id="voice-state-label">ON</span>
+                </button>
+              </div>
+
+              <div class="setting-row setting-row-col setting-row-difficulty">
+                <div class="setting-slider-head">
+                  <div class="setting-meta">
+                    <span class="setting-name">COMBAT DIFFICULTY</span>
+                    <span class="setting-desc" id="difficulty-desc">Standard enemy fire &amp; squad size</span>
+                  </div>
+                  <span class="difficulty-active-badge" id="difficulty-active-badge">NORMAL</span>
+                </div>
+                <div class="difficulty-pill" role="radiogroup" aria-label="Combat Difficulty">
+                  <button type="button" class="pill-opt" id="diff-easy" data-difficulty="easy" role="radio" aria-checked="false">EASY</button>
+                  <button type="button" class="pill-opt active" id="diff-normal" data-difficulty="normal" role="radio" aria-checked="true">NORMAL</button>
+                  <button type="button" class="pill-opt" id="diff-veteran" data-difficulty="veteran" role="radio" aria-checked="false">VETERAN</button>
+                </div>
               </div>
 
               <div class="setting-row setting-row-col">
@@ -547,8 +587,8 @@
         </div>
       </div>
 
-      <!-- Twin-Stick Semi-Transparent Tactical Control Deck -->
-      <div class="touch-deck" id="touch-deck" aria-label="Twin-Stick Touch Controls">
+      <!-- Semi-Transparent Left Drive Control Deck (Tap Map Anywhere to Shoot) -->
+      <div class="touch-deck" id="touch-deck" aria-label="Touch Drive Control">
         <div class="touch-zone touch-zone-left" id="touch-zone-left">
           <div class="stick-base stick-drive" id="drive-stick-base">
             <svg class="stick-ticks" viewBox="0 0 100 100" aria-hidden="true">
@@ -563,29 +603,8 @@
               <line x1="83" y1="83" x2="79" y2="79" class="minor" />
             </svg>
             <div class="stick-inner-ring"></div>
-            <span class="stick-badge">DRV</span>
+            <span class="stick-badge">DRIVE</span>
             <div class="stick-knob" id="drive-stick-knob"></div>
-          </div>
-        </div>
-
-        <div class="touch-zone touch-zone-right" id="touch-zone-right">
-          <div class="stick-base stick-aim" id="aim-stick-base">
-            <svg class="stick-ticks" viewBox="0 0 100 100" aria-hidden="true">
-              <circle class="stick-ring-outer" cx="50" cy="50" r="46" />
-              <line x1="50" y1="3" x2="50" y2="10" />
-              <line x1="50" y1="90" x2="50" y2="97" />
-              <line x1="3" y1="50" x2="10" y2="50" />
-              <line x1="90" y1="50" x2="97" y2="50" />
-              <line x1="17" y1="17" x2="21" y2="21" class="minor" />
-              <line x1="83" y1="17" x2="79" y2="21" class="minor" />
-              <line x1="17" y1="83" x2="21" y2="79" class="minor" />
-              <line x1="83" y1="83" x2="79" y2="79" class="minor" />
-              <circle class="reload-track" cx="50" cy="50" r="46" />
-              <circle class="reload-progress" id="aim-reload-ring" cx="50" cy="50" r="46" />
-            </svg>
-            <div class="stick-deadzone"></div>
-            <span class="stick-badge">AIM</span>
-            <div class="stick-knob" id="aim-stick-knob"></div>
           </div>
         </div>
       </div>
