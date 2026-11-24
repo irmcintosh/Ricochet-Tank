@@ -278,15 +278,6 @@ body {
   color: rgba(252, 165, 165, 0.9);
 }
 
-.radar-hud.recon-active {
-  border-color: rgba(250, 204, 21, 0.88);
-  box-shadow: 0 4px 18px rgba(202, 138, 4, 0.45), inset 0 0 14px rgba(250, 204, 21, 0.22);
-}
-
-.radar-hud.recon-active .radar-label {
-  color: rgba(254, 240, 138, 0.96);
-}
-
 .radar-hud.hidden {
   display: none;
 }

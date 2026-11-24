@@ -1481,6 +1481,7 @@
     state.score = 0;
     state.kills = 0;
     state.damageFlash = 0;
+    state.drones = [];
     state.popups = [];
     if (appShell) {
       appShell.classList.add('is-home');
@@ -1571,6 +1572,7 @@
     player2: null,
     enemies: [],
     bullets: [],
+    drones: [],
     popups: [],
     nextBulletId: 1,
 
@@ -2135,7 +2137,7 @@
     const oldWidth = ARENA_W;
     const arenaGroups = () => [
       state.stones, state.crates, state.tempBarriers, state.enemies, state.deflectors,
-      state.bullets, state.mines, state.powerUps, state.treadMarks, state.popups,
+      state.bullets, state.mines, state.powerUps, state.drones, state.treadMarks, state.popups,
       particleSystem.particles, particleSystem.shockwaves,
       [state.player, state.player2].filter(Boolean),
     ];
@@ -2322,8 +2324,8 @@
     },
     recon: {
       type: 'recon',
-      label: 'RECON DRONE 15S!',
-      short: 'RECON',
+      label: 'STRIKE DRONE!',
+      short: 'DRONE',
       duration: 15.0,
       color: '#facc15',
       accent: '#fef9c3',
@@ -2878,6 +2880,7 @@
     state.treadMarks = [];
     state.enemies = [];
     state.bullets = [];
+    state.drones = [];
     state.netTarget = null;
     particleSystem.clear();
     clearDecals();
@@ -3887,10 +3890,16 @@
           triggerTacticalVoice('shield_online', 'ENERGY SHIELD ACTIVE', 'Energy shield active.', { priority: 2, cooldownMs: 4000 });
         } else if (ev.ptype === 'recon') {
           sfx.playReconDrone();
-          triggerTacticalVoice('recon_drone', 'RECON DRONE DEPLOYED', 'Recon drone deployed. All hostiles marked.', { priority: 2, cooldownMs: 4000 });
+          triggerTacticalVoice('recon_drone', 'TACTICAL DRONE DEPLOYED', 'Tactical drone deployed. Engaging hostiles.', { priority: 2, cooldownMs: 4000 });
         } else {
           sfx.playPowerUp();
         }
+        break;
+      case 'droneStrike':
+        particleSystem.emitShockwave(ev.tx, ev.ty, 36, 0.24, '#facc15', 2.4);
+        particleSystem.emitSparks(ev.tx, ev.ty, '#fef08a', 14, 210);
+        triggerScreenShake(5.5, 0.18, ev.tx - ev.x, ev.ty - ev.y);
+        sfx.playShot(false);
         break;
       case 'shieldBlock':
         particleSystem.emitShockwave(ev.x, ev.y, 32, 0.18, '#22d3ee', 2.4);
@@ -4114,6 +4123,9 @@
             } else {
               popupLabel = 'MAX ARMOR +35';
             }
+          } else if (pu.type === 'recon') {
+            p.buffs.recon = 0;
+            spawnTacticalDrone(p, pi === 1 ? 'p2' : 'player');
           } else {
             p.buffs[pu.type] = def.duration;
           }
@@ -4134,7 +4146,7 @@
               triggerTacticalVoice('shield_online', 'ENERGY SHIELD ACTIVE', 'Energy shield active.', { priority: 2, cooldownMs: 4000 });
             } else if (pu.type === 'recon') {
               sfx.playReconDrone();
-              triggerTacticalVoice('recon_drone', 'RECON DRONE DEPLOYED', 'Recon drone deployed. All hostiles marked.', { priority: 2, cooldownMs: 4000 });
+              triggerTacticalVoice('recon_drone', 'TACTICAL DRONE DEPLOYED', 'Tactical drone deployed. Engaging hostiles.', { priority: 2, cooldownMs: 4000 });
             } else {
               sfx.playPowerUp();
               if (pu.type === 'piercing') {
@@ -4329,6 +4341,7 @@
     }
 
     updatePowerUps(dt);
+    updateDrones(dt);
     updateEnemies(dt);
     updateBullets(dt);
     updateEffects(dt);
@@ -4899,6 +4912,257 @@
     }
   }
 
+  function damageEnemyUnit(e, dmg, hitX, hitY, isBankShot = false, fromDrone = false) {
+    e.hp = Math.max(0, (e.hp !== undefined ? e.hp : 1) - dmg);
+    e.hitFlash = 0.14;
+    if (e.hp > 0) {
+      particleSystem.emitSparks(hitX, hitY, '#fbbf24', 9, 175);
+      sfx.playCrateHit();
+      triggerScreenShake(3.4, 0.1);
+      const hitTxt = e.isBoss ? `ARMOR ${e.hp}/${e.maxHp}` : 'ARMOR HIT';
+      if (state.phase !== 'start') {
+        addPopup(e.x, e.y - e.radius - 8, hitTxt, '#fbbf24', 0.65);
+        emitNetFx('enemyHit', e.x, e.y - e.radius - 8, { txt: hitTxt, tCol: '#fbbf24' });
+      }
+      return false;
+    }
+
+    e.alive = false;
+    let txt = '';
+    let tCol = '#e5e7eb';
+    if (state.phase === 'start') {
+      e.attractRespawnTimer = 2.4;
+    } else {
+      state.kills += 1;
+      recordLifetimeKill();
+      const bonus = isBankShot ? Math.round(e.points * 0.5) : 0;
+      const totalPts = e.points + bonus;
+      state.score += totalPts;
+      updateHUD();
+      txt = e.isBoss
+        ? `BOSS DOWN! +${totalPts}`
+        : fromDrone
+        ? `DRONE KILL! +${totalPts}`
+        : bonus > 0
+        ? `+${totalPts} BANK!`
+        : `+${totalPts}`;
+      tCol = e.isBoss ? '#fbbf24' : fromDrone ? '#fef08a' : bonus > 0 ? '#fde047' : '#e5e7eb';
+      addPopup(e.x, e.y - 14, txt, tCol, e.isBoss ? 1.5 : 0.95);
+
+      state.recentKillCount = state.recentKillTimer > 0 ? state.recentKillCount + 1 : 1;
+      state.recentKillTimer = 4.5;
+      const remainingAlive = state.enemies.some((en) => en.alive);
+
+      if (e.isBoss) {
+        const vMsg = { key: 'boss_down', label: 'COMMAND TANK NEUTRALIZED', spoken: 'Command tank neutralized.', priority: 3, cooldownMs: 2500 };
+        triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
+        emitNetFx('voice', e.x, e.y, vMsg);
+      } else if (state.recentKillCount >= 3 && remainingAlive) {
+        const vMsg = { key: 'squad_eliminated', label: 'HOSTILE SQUAD ELIMINATED', spoken: 'Hostile squad eliminated.', priority: 2, cooldownMs: 7500 };
+        triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
+        emitNetFx('voice', e.x, e.y, vMsg);
+      } else if (state.recentKillCount === 2 && remainingAlive) {
+        const vMsg = { key: 'multi_kill', label: 'MULTIPLE HOSTILES NEUTRALIZED', spoken: 'Multiple hostiles neutralized.', priority: 2, cooldownMs: 6500 };
+        triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
+        emitNetFx('voice', e.x, e.y, vMsg);
+      } else if (fromDrone && remainingAlive) {
+        const vMsg = { key: 'drone_kill', label: 'DRONE STRIKE CONFIRMED', spoken: 'Hostile eliminated by drone strike.', priority: 1, cooldownMs: 5000 };
+        triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
+        emitNetFx('voice', e.x, e.y, vMsg);
+      } else if (isBankShot && remainingAlive) {
+        const vMsg = { key: 'bank_kill', label: 'RICOCHET KILL CONFIRMED', spoken: 'Ricochet kill confirmed.', priority: 1, cooldownMs: 14000 };
+        triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
+        emitNetFx('voice', e.x, e.y, vMsg);
+      }
+    }
+
+    particleSystem.emitTankExplosion(e.x, e.y, '#ef4444', '#f97316', Boolean(e.isBoss));
+    sfx.playExplosion(Boolean(e.isBoss));
+    emitNetFx('tankExplode', e.x, e.y, { pCol: '#ef4444', aCol: '#f97316', big: Boolean(e.isBoss), txt, tCol });
+    return true;
+  }
+
+  function resolveDroneTargetPos(d) {
+    if (d.targetKind === 'enemy' && d.targetIdx >= 0 && d.targetIdx < state.enemies.length) {
+      const e = state.enemies[d.targetIdx];
+      if (e && e.alive) return { entity: e, kind: 'enemy', x: e.x, y: e.y, radius: e.radius };
+    } else if (d.targetKind === 'p2' && state.player2 && state.player2.alive) {
+      return { entity: state.player2, kind: 'p2', x: state.player2.x, y: state.player2.y, radius: state.player2.radius };
+    } else if (d.targetKind === 'p1' && state.player && state.player.alive) {
+      return { entity: state.player, kind: 'p1', x: state.player.x, y: state.player.y, radius: state.player.radius };
+    }
+    return null;
+  }
+
+  function acquireDroneTarget(d) {
+    if (state.sessionMode === 'duel') {
+      if (d.owner === 'player' && state.player2 && state.player2.alive) {
+        d.targetKind = 'p2';
+        d.targetIdx = -1;
+        return;
+      }
+      if (d.owner === 'p2' && state.player && state.player.alive) {
+        d.targetKind = 'p1';
+        d.targetIdx = -1;
+        return;
+      }
+      d.targetKind = null;
+      d.targetIdx = -1;
+      return;
+    }
+
+    let bestIdx = -1;
+    let bestScore = Infinity;
+    for (let i = 0; i < state.enemies.length; i++) {
+      const e = state.enemies[i];
+      if (!e.alive) continue;
+      // Prefer standard hostiles first so the drone takes out an active threat cleanly, falling back to bosses.
+      const bossPenalty = e.isBoss ? 140000 : 0;
+      const d2 = distSq(d.x, d.y, e.x, e.y) + bossPenalty;
+      if (d2 < bestScore) {
+        bestScore = d2;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx >= 0) {
+      d.targetKind = 'enemy';
+      d.targetIdx = bestIdx;
+    } else {
+      d.targetKind = null;
+      d.targetIdx = -1;
+    }
+  }
+
+  function spawnTacticalDrone(ownerTank, ownerLabel) {
+    if (!ownerTank) return;
+    const initAngle = ownerTank.turretAngle || -Math.PI / 2;
+    const drone = {
+      owner: ownerLabel || 'player',
+      x: ownerTank.x,
+      y: ownerTank.y,
+      vx: Math.cos(initAngle) * 210,
+      vy: Math.sin(initAngle) * 210,
+      angle: initAngle,
+      speed: 225,
+      life: POWERUP_DEFS.recon.duration,
+      maxLife: POWERUP_DEFS.recon.duration,
+      age: 0,
+      phase: 'patrol',
+      targetKind: null,
+      targetIdx: -1,
+      lockTime: 0,
+      patrolPhase: Math.random() * Math.PI * 2,
+      strikeTimer: 0,
+      strikeX: ownerTank.x,
+      strikeY: ownerTank.y,
+    };
+    acquireDroneTarget(drone);
+    state.drones.push(drone);
+    particleSystem.emitShockwave(ownerTank.x, ownerTank.y, 28, 0.22, '#facc15', 2.0);
+  }
+
+  function updateDrones(dt) {
+    for (let i = state.drones.length - 1; i >= 0; i--) {
+      const d = state.drones[i];
+      d.age += dt;
+      d.life -= dt;
+
+      if (d.phase === 'strike') {
+        d.strikeTimer -= dt;
+        d.x += d.vx * 0.25 * dt;
+        d.y += d.vy * 0.25 * dt;
+        if (d.strikeTimer <= 0) {
+          particleSystem.emitShockwave(d.x, d.y, 26, 0.22, '#facc15', 1.8);
+          particleSystem.emitSparks(d.x, d.y, '#fef08a', 8, 120);
+          state.drones.splice(i, 1);
+        }
+        continue;
+      }
+
+      if (d.life <= 0) {
+        particleSystem.emitShockwave(d.x, d.y, 24, 0.22, '#facc15', 1.6);
+        state.drones.splice(i, 1);
+        continue;
+      }
+
+      let target = resolveDroneTargetPos(d);
+      if (!target) {
+        acquireDroneTarget(d);
+        target = resolveDroneTargetPos(d);
+      }
+
+      if (!target) {
+        // Patrol smoothly around center of the arena until a hostile appears or duration expires
+        const orbitAngle = d.patrolPhase + d.age * 1.35;
+        const desiredX = ARENA_W * 0.5 + Math.cos(orbitAngle) * Math.min(130, ARENA_W * 0.26);
+        const desiredY = ARENA_H * 0.5 + Math.sin(orbitAngle) * Math.min(130, ARENA_H * 0.26);
+        const desiredAngle = Math.atan2(desiredY - d.y, desiredX - d.x);
+        d.angle = rotateTowards(d.angle, desiredAngle, 4.8 * dt);
+        d.vx = Math.cos(d.angle) * d.speed;
+        d.vy = Math.sin(d.angle) * d.speed;
+        d.x = clamp(d.x + d.vx * dt, TILE * 0.8, ARENA_W - TILE * 0.8);
+        d.y = clamp(d.y + d.vy * dt, TILE * 0.8, ARENA_H - TILE * 0.8);
+        d.phase = 'patrol';
+        d.lockTime = 0;
+        continue;
+      }
+
+      const dx = target.x - d.x;
+      const dy = target.y - d.y;
+      const dist = Math.hypot(dx, dy);
+
+      // Fly around in a sweeping ingress curve before settling into strike orbit
+      const minPatrolTime = 0.85;
+      const desiredOffsetAng = d.patrolPhase + d.age * 2.1;
+      const orbitDist = 64;
+      const destX = d.age < minPatrolTime
+        ? target.x + Math.cos(desiredOffsetAng) * (orbitDist + 36)
+        : target.x + Math.cos(desiredOffsetAng) * orbitDist;
+      const destY = d.age < minPatrolTime
+        ? target.y + Math.sin(desiredOffsetAng) * (orbitDist + 36)
+        : target.y + Math.sin(desiredOffsetAng) * orbitDist;
+
+      const steerAngle = Math.atan2(destY - d.y, destX - d.x);
+      d.angle = rotateTowards(d.angle, steerAngle, 5.8 * dt);
+      const flightSpeed = dist < 110 ? d.speed * 0.88 : d.speed;
+      d.vx = Math.cos(d.angle) * flightSpeed;
+      d.vy = Math.sin(d.angle) * flightSpeed;
+      d.x = clamp(d.x + d.vx * dt, TILE * 0.7, ARENA_W - TILE * 0.7);
+      d.y = clamp(d.y + d.vy * dt, TILE * 0.7, ARENA_H - TILE * 0.7);
+
+      if (d.age >= minPatrolTime && dist <= 120) {
+        d.phase = 'lock';
+        d.lockTime += dt;
+        if (d.lockTime >= 0.72) {
+          d.phase = 'strike';
+          d.strikeTimer = 0.28;
+          d.strikeX = target.x;
+          d.strikeY = target.y;
+          d.angle = Math.atan2(target.y - d.y, target.x - d.x);
+          particleSystem.emitShockwave(target.x, target.y, 38, 0.24, '#facc15', 2.6);
+          particleSystem.emitSparks(target.x, target.y, '#fef08a', 14, 210);
+          triggerScreenShake(5.5, 0.18, target.x - d.x, target.y - d.y);
+          emitNetFx('droneStrike', d.x, d.y, { tx: r1(target.x), ty: r1(target.y) });
+
+          if (target.kind === 'enemy') {
+            const dmg = target.entity.isBoss ? 2 : 3;
+            damageEnemyUnit(target.entity, dmg, target.x, target.y, false, true);
+          } else {
+            applyDamageToPlayerTank(target.entity, target.kind === 'p2' ? 'p2' : 'player', {
+              x: target.x,
+              y: target.y,
+              vx: (target.x - d.x) * 2,
+              vy: (target.y - d.y) * 2,
+            });
+          }
+        }
+      } else {
+        d.phase = 'patrol';
+        d.lockTime = Math.max(0, d.lockTime - dt * 1.5);
+      }
+    }
+  }
+
   function handleShieldDeflect(tank, b) {
     const bx = b && b.x !== undefined ? b.x : tank.x;
     const by = b && b.y !== undefined ? b.y : tank.y;
@@ -5198,62 +5462,7 @@
             if (!e.alive) continue;
             const hitR = b.radius + e.radius;
             if (distSq(b.x, b.y, e.x, e.y) <= hitR * hitR) {
-              e.hp = Math.max(0, (e.hp !== undefined ? e.hp : 1) - 1);
-              e.hitFlash = 0.14;
-              if (e.hp > 0) {
-                particleSystem.emitSparks(b.x, b.y, '#fbbf24', 9, 175);
-                sfx.playCrateHit();
-                triggerScreenShake(3.4, 0.1);
-                const hitTxt = e.isBoss ? `ARMOR ${e.hp}/${e.maxHp}` : 'ARMOR HIT';
-                if (state.phase !== 'start') {
-                  addPopup(e.x, e.y - e.radius - 8, hitTxt, '#fbbf24', 0.65);
-                  emitNetFx('enemyHit', e.x, e.y - e.radius - 8, { txt: hitTxt, tCol: '#fbbf24' });
-                }
-              } else {
-                e.alive = false;
-                let txt = '';
-                let tCol = '#e5e7eb';
-                if (state.phase === 'start') {
-                  e.attractRespawnTimer = 2.4;
-                } else {
-                  state.kills += 1;
-                  recordLifetimeKill();
-                  const bonus = b.bounced ? Math.round(e.points * 0.5) : 0;
-                  const totalPts = e.points + bonus;
-                  state.score += totalPts;
-                  updateHUD();
-                  txt = e.isBoss ? `BOSS DOWN! +${totalPts}` : bonus > 0 ? `+${totalPts} BANK!` : `+${totalPts}`;
-                  tCol = e.isBoss ? '#fbbf24' : bonus > 0 ? '#fde047' : '#e5e7eb';
-                  addPopup(e.x, e.y - 14, txt, tCol, e.isBoss ? 1.5 : 0.95);
-
-                  state.recentKillCount = state.recentKillTimer > 0 ? state.recentKillCount + 1 : 1;
-                  state.recentKillTimer = 4.5;
-                  const remainingAlive = state.enemies.some((en) => en.alive);
-
-                  if (e.isBoss) {
-                    const vMsg = { key: 'boss_down', label: 'COMMAND TANK NEUTRALIZED', spoken: 'Command tank neutralized.', priority: 3, cooldownMs: 2500 };
-                    triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
-                    emitNetFx('voice', e.x, e.y, vMsg);
-                  } else if (state.recentKillCount >= 3 && remainingAlive) {
-                    const vMsg = { key: 'squad_eliminated', label: 'HOSTILE SQUAD ELIMINATED', spoken: 'Hostile squad eliminated.', priority: 2, cooldownMs: 7500 };
-                    triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
-                    emitNetFx('voice', e.x, e.y, vMsg);
-                  } else if (state.recentKillCount === 2 && remainingAlive) {
-                    const vMsg = { key: 'multi_kill', label: 'MULTIPLE HOSTILES NEUTRALIZED', spoken: 'Multiple hostiles neutralized.', priority: 2, cooldownMs: 6500 };
-                    triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
-                    emitNetFx('voice', e.x, e.y, vMsg);
-                  } else if (b.bounced && remainingAlive) {
-                    const vMsg = { key: 'bank_kill', label: 'RICOCHET KILL CONFIRMED', spoken: 'Ricochet kill confirmed.', priority: 1, cooldownMs: 14000 };
-                    triggerTacticalVoice(vMsg.key, vMsg.label, vMsg.spoken, vMsg);
-                    emitNetFx('voice', e.x, e.y, vMsg);
-                  }
-                }
-
-                particleSystem.emitTankExplosion(e.x, e.y, '#ef4444', '#f97316', Boolean(e.isBoss));
-                sfx.playExplosion(Boolean(e.isBoss));
-                emitNetFx('tankExplode', e.x, e.y, { pCol: '#ef4444', aCol: '#f97316', big: Boolean(e.isBoss), txt, tCol });
-              }
-
+              damageEnemyUnit(e, 1, b.x, b.y, b.bounced, false);
               state.bullets.splice(i, 1);
               removed = true;
               break;
@@ -6508,55 +6717,6 @@
         }
       }
 
-      if (p.buffs.recon > 0) {
-        const nowSec = performance.now() * 0.001;
-        const orbitAng = nowSec * 2.5 + (isP2 ? Math.PI : 0);
-        const droneX = p.x + Math.cos(orbitAng) * (p.radius + 13);
-        const droneY = p.y + Math.sin(orbitAng) * (p.radius + 13);
-        ctx.save();
-        // Faint UAV telemetry tether ring
-        ctx.strokeStyle = 'rgba(250, 204, 21, 0.25)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 4]);
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius + 13, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Quad-rotor tactical recon drone silhouette
-        ctx.translate(droneX, droneY);
-        ctx.rotate(orbitAng + Math.PI * 0.5);
-        ctx.strokeStyle = '#fef08a';
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.moveTo(-4, -4);
-        ctx.lineTo(4, 4);
-        ctx.moveTo(4, -4);
-        ctx.lineTo(-4, 4);
-        ctx.stroke();
-
-        ctx.fillStyle = 'rgba(250, 204, 21, 0.35)';
-        [[-4, -4], [4, -4], [4, 4], [-4, 4]].forEach(([rx, ry]) => {
-          ctx.beginPath();
-          ctx.arc(rx, ry, 2.2, 0, Math.PI * 2);
-          ctx.fill();
-        });
-
-        ctx.fillStyle = '#0f172a';
-        ctx.strokeStyle = '#facc15';
-        ctx.lineWidth = 1.1;
-        ctx.beginPath();
-        ctx.arc(0, 0, 2.4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#fef9c3';
-        ctx.beginPath();
-        ctx.arc(0, 0, 1.0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-
       if (p.invulnTimer > 0) {
         ctx.strokeStyle = isDuelP2 ? 'rgba(248, 113, 113, 0.65)' : 'rgba(190, 242, 100, 0.6)';
         ctx.lineWidth = 1.8;
@@ -6740,7 +6900,18 @@
     if (!p || !p.alive || state.phase !== 'playing') return;
 
     const active = [];
-    ['shield', 'recon', 'rapid', 'spread', 'turbo', 'piercing'].forEach((key) => {
+    const ownerTag = state.netMode === 'p2p-client' ? 'p2' : 'player';
+    let ownedDroneLife = 0;
+    for (let i = 0; i < state.drones.length; i++) {
+      const d = state.drones[i];
+      if (d.owner === ownerTag && d.life > ownedDroneLife) {
+        ownedDroneLife = d.life;
+      }
+    }
+    if (ownedDroneLife > 0) {
+      active.push({ def: POWERUP_DEFS.recon, remaining: ownedDroneLife });
+    }
+    ['shield', 'rapid', 'spread', 'turbo', 'piercing'].forEach((key) => {
       if (p.buffs[key] > 0) {
         active.push({ def: POWERUP_DEFS[key], remaining: p.buffs[key] });
       }
@@ -7117,6 +7288,120 @@
     ctx.restore();
   }
 
+  function renderDrones() {
+    if (!state.drones || state.drones.length === 0) return;
+    const nowSec = performance.now() * 0.001;
+    for (let i = 0; i < state.drones.length; i++) {
+      const d = state.drones[i];
+      const hover = Math.sin(nowSec * 9 + i * 1.7) * 1.8;
+      const target = d.phase === 'strike'
+        ? { x: d.strikeX, y: d.strikeY, radius: 14 }
+        : resolveDroneTargetPos(d);
+
+      // Aerial targeting laser & reticle over acquired hostile
+      if (target && (d.phase === 'lock' || d.phase === 'strike')) {
+        const lockFrac = d.phase === 'strike' ? 1 : clamp(d.lockTime / 0.72, 0, 1);
+        ctx.save();
+        if (d.phase === 'strike') {
+          ctx.strokeStyle = 'rgba(250, 204, 21, 0.55)';
+          ctx.lineWidth = 6;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(d.x, d.y + hover);
+          ctx.lineTo(target.x, target.y);
+          ctx.stroke();
+
+          ctx.strokeStyle = '#fef9c3';
+          ctx.lineWidth = 2.2;
+          ctx.beginPath();
+          ctx.moveTo(d.x, d.y + hover);
+          ctx.lineTo(target.x, target.y);
+          ctx.stroke();
+        } else {
+          ctx.strokeStyle = `rgba(250, 204, 21, ${(0.28 + lockFrac * 0.52).toFixed(2)})`;
+          ctx.lineWidth = 1.25;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(d.x, d.y + hover);
+          ctx.lineTo(target.x, target.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          const retR = target.radius + 9 - lockFrac * 5;
+          ctx.strokeStyle = `rgba(254, 240, 138, ${(0.45 + lockFrac * 0.5).toFixed(2)})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(target.x, target.y, retR, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // Ground shadow cast beneath the high-altitude UAV
+      ctx.save();
+      ctx.fillStyle = 'rgba(4, 7, 10, 0.36)';
+      ctx.beginPath();
+      ctx.ellipse(d.x + 8, d.y + 13, 9.5, 5.5, d.angle, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Quad-rotor tactical strike drone airframe
+      ctx.save();
+      ctx.translate(d.x, d.y + hover);
+      ctx.rotate(d.angle);
+
+      // Rotor arms
+      ctx.strokeStyle = '#d4d4d8';
+      ctx.lineWidth = 2.0;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-7.5, -7.5);
+      ctx.lineTo(7.5, 7.5);
+      ctx.moveTo(7.5, -7.5);
+      ctx.lineTo(-7.5, 7.5);
+      ctx.stroke();
+
+      // Spinning rotor wash discs
+      const rotorOffsets = [[-8, -8], [8, -8], [8, 8], [-8, 8]];
+      for (let r = 0; r < rotorOffsets.length; r++) {
+        const [rx, ry] = rotorOffsets[r];
+        ctx.fillStyle = 'rgba(250, 204, 21, 0.24)';
+        ctx.beginPath();
+        ctx.arc(rx, ry, 4.3, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(254, 240, 138, 0.72)';
+        ctx.lineWidth = 0.9;
+        const spin = nowSec * 28 + r * 1.1;
+        ctx.beginPath();
+        ctx.moveTo(rx - Math.cos(spin) * 3.6, ry - Math.sin(spin) * 3.6);
+        ctx.lineTo(rx + Math.cos(spin) * 3.6, ry + Math.sin(spin) * 3.6);
+        ctx.stroke();
+      }
+
+      // Airframe fuselage
+      ctx.fillStyle = d.owner === 'p2' && state.sessionMode === 'duel' ? '#7f1d1d' : '#1e293b';
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(8, 0);
+      ctx.lineTo(1, -4.5);
+      ctx.lineTo(-7, -3);
+      ctx.lineTo(-7, 3);
+      ctx.lineTo(1, 4.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Nose optical sensor & status beacon
+      ctx.fillStyle = d.phase === 'lock' || d.phase === 'strike' ? '#fef08a' : '#facc15';
+      ctx.beginPath();
+      ctx.arc(3.5, 0, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   function render() {
     const asphaltScale = state.dpr * state.renderScale / 2;
     ctx.setTransform(asphaltScale, 0, 0, asphaltScale, 0, 0);
@@ -7147,6 +7432,7 @@
     renderTanks();
     renderBullets();
     renderEffects();
+    renderDrones();
     if (state.phase !== 'start') {
       renderActiveBuffBar();
     }
@@ -7161,24 +7447,8 @@
       return;
     }
 
-    const localTank = state.netMode === 'p2p-client' ? state.player2 : state.player;
-    const reconRemaining =
-      state.sessionMode === 'coop'
-        ? Math.max(state.player ? state.player.buffs.recon || 0 : 0, state.player2 ? state.player2.buffs.recon || 0 : 0)
-        : localTank
-        ? localTank.buffs.recon || 0
-        : 0;
-    const reconActive = reconRemaining > 0;
-
-    if (radarHud) {
-      radarHud.classList.toggle('recon-active', reconActive);
-    }
     if (radarLabel) {
-      const nextRadarTxt = reconActive
-        ? `RECON ${Math.ceil(reconRemaining)}S`
-        : state.isBossSector
-        ? 'BOSS ALERT'
-        : 'RADAR';
+      const nextRadarTxt = state.isBossSector ? 'BOSS ALERT' : 'RADAR';
       if (radarLabel.textContent !== nextRadarTxt) {
         radarLabel.textContent = nextRadarTxt;
       }
@@ -7205,18 +7475,10 @@
     rc.clip();
 
     const bossAlert = state.isBossSector;
-    rc.fillStyle = reconActive
-      ? 'rgba(18, 22, 14, 0.94)'
-      : bossAlert
-      ? 'rgba(24, 10, 12, 0.94)'
-      : 'rgba(11, 16, 15, 0.92)';
+    rc.fillStyle = bossAlert ? 'rgba(24, 10, 12, 0.94)' : 'rgba(11, 16, 15, 0.92)';
     rc.fillRect(0, 0, rSize, rSize);
 
-    rc.strokeStyle = reconActive
-      ? 'rgba(250, 204, 21, 0.28)'
-      : bossAlert
-      ? 'rgba(239, 68, 68, 0.22)'
-      : 'rgba(132, 204, 22, 0.16)';
+    rc.strokeStyle = bossAlert ? 'rgba(239, 68, 68, 0.22)' : 'rgba(132, 204, 22, 0.16)';
     rc.lineWidth = 0.8;
     [outerR * 0.36, outerR * 0.7, outerR * 0.98].forEach((r) => {
       rc.beginPath();
@@ -7231,38 +7493,20 @@
     rc.lineTo(cx, cy + outerR);
     rc.stroke();
 
-    const sweepSpeed = reconActive ? 0.0042 : 0.0022;
-    const sweepAngle = (now * sweepSpeed) % (Math.PI * 2);
-    rc.fillStyle = reconActive
-      ? 'rgba(250, 204, 21, 0.18)'
-      : bossAlert
-      ? 'rgba(239, 68, 68, 0.14)'
-      : 'rgba(132, 204, 22, 0.12)';
+    const sweepAngle = (now * 0.0022) % (Math.PI * 2);
+    rc.fillStyle = bossAlert ? 'rgba(239, 68, 68, 0.14)' : 'rgba(132, 204, 22, 0.12)';
     rc.beginPath();
     rc.moveTo(cx, cy);
     rc.arc(cx, cy, outerR, sweepAngle - 0.52, sweepAngle);
     rc.closePath();
     rc.fill();
 
-    rc.strokeStyle = reconActive
-      ? 'rgba(254, 240, 138, 0.68)'
-      : bossAlert
-      ? 'rgba(248, 113, 113, 0.55)'
-      : 'rgba(163, 230, 53, 0.45)';
+    rc.strokeStyle = bossAlert ? 'rgba(248, 113, 113, 0.55)' : 'rgba(163, 230, 53, 0.45)';
     rc.lineWidth = 1;
     rc.beginPath();
     rc.moveTo(cx, cy);
     rc.lineTo(cx + Math.cos(sweepAngle) * outerR, cy + Math.sin(sweepAngle) * outerR);
     rc.stroke();
-
-    if (reconActive) {
-      const scanWave = ((now * 0.0012) % 1) * outerR;
-      rc.strokeStyle = `rgba(250, 204, 21, ${(1 - scanWave / outerR) * 0.55})`;
-      rc.lineWidth = 1.1;
-      rc.beginPath();
-      rc.arc(cx, cy, scanWave, 0, Math.PI * 2);
-      rc.stroke();
-    }
 
     const arenaDiag = Math.hypot(ARENA_W, ARENA_H);
     const scale = (outerR * 1.84) / arenaDiag;
@@ -7271,11 +7515,7 @@
     const offX = cx - mapW * 0.5;
     const offY = cy - mapH * 0.5 - 2;
 
-    rc.strokeStyle = reconActive
-      ? 'rgba(250, 204, 21, 0.42)'
-      : bossAlert
-      ? 'rgba(239, 68, 68, 0.35)'
-      : 'rgba(132, 204, 22, 0.28)';
+    rc.strokeStyle = bossAlert ? 'rgba(239, 68, 68, 0.35)' : 'rgba(132, 204, 22, 0.28)';
     rc.lineWidth = 0.9;
     rc.strokeRect(offX, offY, mapW, mapH);
 
@@ -7300,56 +7540,13 @@
       rc.fillRect(mx - 1.6, my - 1.6, 3.2, 3.2);
     }
 
-    const RADAR_SENSOR_RANGE = 185;
-    const RADAR_SENSOR_RANGE_SQ = RADAR_SENSOR_RANGE * RADAR_SENSOR_RANGE;
-    const sensorOriginTanks =
-      state.sessionMode === 'duel' && state.netMode !== 'local-split'
-        ? [localTank]
-        : [state.player, state.player2];
-
-    const isPositionDetectedOnRadar = (tx, ty) => {
-      if (reconActive) return true;
-      for (let si = 0; si < sensorOriginTanks.length; si++) {
-        const ft = sensorOriginTanks[si];
-        if (!ft || !ft.alive) continue;
-        if (distSq(ft.x, ft.y, tx, ty) <= RADAR_SENSOR_RANGE_SQ) return true;
-        if (hasLineOfSight(ft.x, ft.y, tx, ty)) return true;
-      }
-      return false;
-    };
-
-    if (!reconActive) {
-      rc.save();
-      rc.strokeStyle = 'rgba(132, 204, 22, 0.24)';
-      rc.lineWidth = 0.8;
-      rc.setLineDash([2.5, 2.5]);
-      for (let si = 0; si < sensorOriginTanks.length; si++) {
-        const ft = sensorOriginTanks[si];
-        if (!ft || !ft.alive) continue;
-        rc.beginPath();
-        rc.arc(offX + ft.x * scale, offY + ft.y * scale, RADAR_SENSOR_RANGE * scale, 0, Math.PI * 2);
-        rc.stroke();
-      }
-      rc.setLineDash([]);
-      rc.restore();
-    }
-
     const pingPulse = 0.5 + 0.5 * Math.sin(now * 0.008);
     for (let i = 0; i < state.enemies.length; i++) {
       const e = state.enemies[i];
       if (!e.alive) continue;
-      if (!isPositionDetectedOnRadar(e.x, e.y)) continue;
 
       const ex = offX + e.x * scale;
       const ey = offY + e.y * scale;
-
-      if (reconActive) {
-        // High-visibility UAV target acquisition diamond/reticle
-        rc.strokeStyle = `rgba(250, 204, 21, ${0.55 + pingPulse * 0.4})`;
-        rc.lineWidth = 0.9;
-        const br = e.isBoss ? 5.2 : 3.8;
-        rc.strokeRect(ex - br, ey - br, br * 2, br * 2);
-      }
 
       if (e.isBoss) {
         rc.strokeStyle = `rgba(251, 191, 36, ${0.4 + pingPulse * 0.45})`;
@@ -7388,6 +7585,21 @@
       rc.fill();
     }
 
+    for (let i = 0; i < state.drones.length; i++) {
+      const d = state.drones[i];
+      const dx = offX + d.x * scale;
+      const dy = offY + d.y * scale;
+      rc.strokeStyle = 'rgba(250, 204, 21, 0.72)';
+      rc.lineWidth = 0.9;
+      rc.beginPath();
+      rc.arc(dx, dy, 3.4, 0, Math.PI * 2);
+      rc.stroke();
+      rc.fillStyle = '#fef08a';
+      rc.beginPath();
+      rc.arc(dx, dy, 1.5, 0, Math.PI * 2);
+      rc.fill();
+    }
+
     const drawRadarTankChevron = (t, fillCol, strokeCol) => {
       if (!t || !t.alive) return;
       const px = offX + t.x * scale;
@@ -7416,26 +7628,12 @@
       rc.restore();
     };
 
-    const showP1OnRadar =
-      state.sessionMode !== 'duel' ||
-      state.netMode !== 'p2p-client' ||
-      isPositionDetectedOnRadar(state.player ? state.player.x : 0, state.player ? state.player.y : 0);
-    const showP2OnRadar =
-      state.sessionMode !== 'duel' ||
-      state.netMode === 'p2p-client' ||
-      state.netMode === 'local-split' ||
-      isPositionDetectedOnRadar(state.player2 ? state.player2.x : 0, state.player2 ? state.player2.y : 0);
-
-    if (showP1OnRadar) {
-      drawRadarTankChevron(state.player, '#84cc16', '#ecfccb');
-    }
-    if (showP2OnRadar) {
-      drawRadarTankChevron(
-        state.player2,
-        state.sessionMode === 'duel' ? '#ef4444' : '#f59e0b',
-        state.sessionMode === 'duel' ? '#fecaca' : '#fef3c7'
-      );
-    }
+    drawRadarTankChevron(state.player, '#84cc16', '#ecfccb');
+    drawRadarTankChevron(
+      state.player2,
+      state.sessionMode === 'duel' ? '#ef4444' : '#f59e0b',
+      state.sessionMode === 'duel' ? '#fecaca' : '#fef3c7'
+    );
 
     rc.restore();
   }
@@ -7530,6 +7728,19 @@
       pu: state.powerUps.map((pu) => [pu.type, r1(pu.x), r1(pu.y), r1(pu.life)]),
       mn: state.mines.map((m) => [r1(m.x), r1(m.y), r1(m.armTimer)]),
       tb: state.tempBarriers.map((tb) => [r1(tb.x), r1(tb.y), tb.w, tb.h, tb.hp, tb.maxHp]),
+      dr: state.drones.map((d) => [
+        d.owner,
+        r1(d.x),
+        r1(d.y),
+        r3(d.angle),
+        r1(d.life),
+        d.phase,
+        d.targetKind || '',
+        d.targetIdx,
+        r1(d.lockTime),
+        r1(d.strikeX),
+        r1(d.strikeY),
+      ]),
     };
   }
 
@@ -7647,6 +7858,33 @@
         };
       });
     }
+    if (Array.isArray(msg.dr)) {
+      state.drones = msg.dr.map((arr, idx) => {
+        const prev = state.drones[idx];
+        return {
+          owner: arr[0],
+          x: prev ? prev.x + (arr[1] - prev.x) * 0.45 : arr[1],
+          y: prev ? prev.y + (arr[2] - prev.y) * 0.45 : arr[2],
+          vx: 0,
+          vy: 0,
+          angle: arr[3],
+          speed: 225,
+          life: arr[4],
+          maxLife: POWERUP_DEFS.recon.duration,
+          age: prev ? prev.age : 0,
+          phase: arr[5],
+          targetKind: arr[6] || null,
+          targetIdx: arr[7],
+          lockTime: arr[8] || 0,
+          patrolPhase: 0,
+          strikeTimer: 0.2,
+          strikeX: arr[9] || arr[1],
+          strikeY: arr[10] || arr[2],
+        };
+      });
+    } else {
+      state.drones = [];
+    }
     if (immediate) applySnapshotEntities(msg, 1);
     updateHUD();
   }
@@ -7711,6 +7949,7 @@
         } else {
           updatePlayers(dt);
           updatePowerUps(dt);
+          updateDrones(dt);
           updateEnemies(dt);
           updateBullets(dt);
           updateEffects(dt);
