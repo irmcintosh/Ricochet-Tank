@@ -2457,3 +2457,27 @@ body {
     letter-spacing: 0.02em;
   }
 }
+
+/* Offline Ready Badge */
+.home-offline-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  margin-bottom: 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(132, 204, 22, 0.45);
+  background: rgba(18, 24, 20, 0.85);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--tac-green-bright);
+}
+
+.offline-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--tac-green-bright);
+  box-shadow: 0 0 6px var(--tac-green-bright);
+}
